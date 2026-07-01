@@ -11,6 +11,8 @@ import (
 	"github.com/valyala/fasthttp"
 	"go.uber.org/zap"
 
+	pkerrors "github.com/gmb-lib/go-platform-kit/errors"
+
 	"github.com/go-make-bytes/previewbyte/clients"
 	"github.com/go-make-bytes/previewbyte/render"
 )
@@ -309,26 +311,30 @@ func (r *router) mapSourceError(ctx *azugo.Context, err error) {
 		return
 	}
 	ctx.Log().Warn("preview source read failed", zap.Error(err))
-	ctx.StatusCode(fasthttp.StatusBadGateway)
-	ctx.JSON(map[string]string{"error": "upstream_error"})
+	ctx.Error(pkerrors.NewProblem("err:upstream:unavailable",
+		pkerrors.WithStatus(fasthttp.StatusBadGateway)))
 }
 
 // renderFailed reports a render failure without leaking any engine detail to the
 // caller; the error is logged (it carries no document content).
 func (r *router) renderFailed(ctx *azugo.Context, err error) {
 	ctx.Log().Warn("preview render failed", zap.Error(err))
-	ctx.StatusCode(fasthttp.StatusInternalServerError)
-	ctx.JSON(map[string]string{"error": "render_failed"})
+	ctx.Error(pkerrors.NewProblem("err:preview:renderFailed",
+		pkerrors.WithStatus(fasthttp.StatusInternalServerError)))
 }
 
-// unsupported reports a typed unsupported-input result on the image/text endpoints.
+// unsupported reports a typed unsupported-input result on the image/text endpoints;
+// the specific reason rides the detail.
 func (r *router) unsupported(ctx *azugo.Context, reason string) {
-	ctx.StatusCode(fasthttp.StatusUnsupportedMediaType)
-	ctx.JSON(map[string]string{"error": reason})
+	ctx.Error(pkerrors.NewProblem("err:preview:unsupported",
+		pkerrors.WithStatus(fasthttp.StatusUnsupportedMediaType),
+		pkerrors.WithTitle("Unsupported media type"),
+		pkerrors.WithDetail(reason)))
 }
 
 // sourceUnavailable reports that no document source is configured yet.
 func (r *router) sourceUnavailable(ctx *azugo.Context) {
-	ctx.StatusCode(fasthttp.StatusServiceUnavailable)
-	ctx.JSON(map[string]string{"status": "not_ready", "error": "document source not configured"})
+	ctx.Error(pkerrors.NewProblem("err:preview:notConfigured",
+		pkerrors.WithStatus(fasthttp.StatusServiceUnavailable),
+		pkerrors.WithDetail("document source not configured")))
 }
