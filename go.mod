@@ -6,7 +6,7 @@ require (
 	azugo.io/azugo v0.34.2
 	azugo.io/core v0.34.0
 	github.com/gmb-lib/go-authbyte v0.13.0
-	github.com/gmb-lib/go-platform-kit v1.2.1
+	github.com/gmb-lib/go-platform-kit v1.3.0
 	github.com/go-quicktest/qt v1.102.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0

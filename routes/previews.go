@@ -328,7 +328,6 @@ func (r *router) renderFailed(ctx *azugo.Context, err error) {
 func (r *router) unsupported(ctx *azugo.Context, reason string) {
 	ctx.Error(pkerrors.NewProblem("err:preview:unsupported",
 		pkerrors.WithStatus(fasthttp.StatusUnsupportedMediaType),
-		pkerrors.WithTitle("Unsupported media type"),
 		pkerrors.WithDetail(reason)))
 }
 
