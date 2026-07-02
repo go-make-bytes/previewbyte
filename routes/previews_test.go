@@ -24,6 +24,7 @@ type fakeDoer struct {
 	content       []byte
 	metaStatus    int
 	contentStatus int
+	metaBody      []byte // when set, the raw metadata-read body (e.g. an upstream problem+json)
 }
 
 func (f *fakeDoer) DoServiceOnBehalf(_ context.Context, _, _, _, subjectToken, _, fullURL string, _ http.Header, _ []byte) (*authclient.BackgroundResponse, error) {
@@ -34,7 +35,10 @@ func (f *fakeDoer) DoServiceOnBehalf(_ context.Context, _, _, _, subjectToken, _
 	if strings.HasSuffix(fullURL, "/content") {
 		return &authclient.BackgroundResponse{StatusCode: orDefault(f.contentStatus), Body: f.content}, nil
 	}
-	body, _ := json.Marshal(f.meta)
+	body := f.metaBody
+	if body == nil {
+		body, _ = json.Marshal(f.meta)
+	}
 
 	return &authclient.BackgroundResponse{StatusCode: orDefault(f.metaStatus), Body: body}, nil
 }
@@ -226,6 +230,28 @@ func TestManifestNotOwned(t *testing.T) {
 	qt.Assert(t, qt.IsNil(err))
 	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusNotFound))
 	fasthttp.ReleaseResponse(resp)
+}
+
+// A non-404 upstream error is relayed, not collapsed to a bare 502: the
+// client-actionable status is preserved and the terminal code survives the hop.
+func TestManifestUpstreamErrorRelayed(t *testing.T) {
+	doer := &fakeDoer{
+		metaStatus: http.StatusForbidden,
+		metaBody:   []byte(`{"title":"Forbidden","status":403,"code":"err:document:forbidden"}`),
+	}
+
+	app := testApp(t, fakeDocs(doer), &fakeRenderer{})
+	app.Start(t)
+	defer app.Stop()
+
+	tc := app.TestClient()
+	resp, err := tc.Get("/api/v1/previews/doc-x", tc.WithHeader(hdrScopes, "preview:read"), tc.WithHeader("Authorization", bearer))
+	qt.Assert(t, qt.IsNil(err))
+	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusForbidden)) // preserved, not collapsed to 502
+	body, err := resp.BodyUncompressed()
+	fasthttp.ReleaseResponse(resp)
+	qt.Assert(t, qt.IsNil(err))
+	qt.Assert(t, qt.IsTrue(strings.Contains(string(body), "err:document:forbidden"))) // terminal code relayed, not rewritten
 }
 
 // A page renders to an inert image.

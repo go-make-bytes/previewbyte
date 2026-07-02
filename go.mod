@@ -3,8 +3,8 @@ module github.com/go-make-bytes/previewbyte
 go 1.26.4
 
 require (
-	azugo.io/azugo v0.34.2
-	azugo.io/core v0.34.0
+	azugo.io/azugo v0.34.3
+	azugo.io/core v0.34.1
 	github.com/gmb-lib/go-authbyte v0.13.0
 	github.com/gmb-lib/go-platform-kit v1.3.0
 	github.com/go-quicktest/qt v1.102.0

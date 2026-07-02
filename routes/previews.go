@@ -300,13 +300,27 @@ func renderableReason(err error) (string, bool) {
 	}
 }
 
-// mapSourceError maps a document-source error onto a safe response: a not-found
-// from the source (which is also how it reports a document the user does not own)
-// becomes 404; any other upstream failure becomes a generic 502.
+// mapSourceError maps a document-source error onto a safe response. A not-found
+// from the source (also how it reports a document the user does not own) becomes
+// this service's own 404. Any other upstream error is relayed — its terminal code,
+// source, and trace id are preserved and this hop appended, rather than collapsed
+// to a bare gateway error; a client-actionable status is kept and a server-side
+// failure maps to 502. A transport failure with no HTTP response at all becomes a
+// uniform upstream-unavailable.
 func (r *router) mapSourceError(ctx *azugo.Context, err error) {
 	var he *clients.HTTPError
-	if errors.As(err, &he) && he.StatusCode == fasthttp.StatusNotFound {
-		ctx.Error(corehttp.NotFoundError{Resource: "document"})
+	if errors.As(err, &he) {
+		if he.StatusCode == fasthttp.StatusNotFound {
+			ctx.Error(corehttp.NotFoundError{Resource: "document"})
+
+			return
+		}
+		outer := he.StatusCode
+		if outer >= fasthttp.StatusInternalServerError {
+			outer = fasthttp.StatusBadGateway
+		}
+		down, _ := pkerrors.ParseProblem([]byte(he.Body))
+		ctx.Error(pkerrors.Relay(down, r.AppName, outer))
 
 		return
 	}
