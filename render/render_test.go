@@ -23,7 +23,7 @@ func samplePDF() []byte {
 	buf.WriteString("%PDF-1.4\n")
 	obj := func(n int, body string) {
 		offsets[n] = buf.Len()
-		buf.WriteString(fmt.Sprintf("%d 0 obj\n%s\nendobj\n", n, body))
+		fmt.Fprintf(&buf, "%d 0 obj\n%s\nendobj\n", n, body)
 	}
 
 	obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
@@ -37,9 +37,9 @@ func samplePDF() []byte {
 	buf.WriteString("xref\n0 6\n")
 	buf.WriteString("0000000000 65535 f \n")
 	for i := 1; i <= 5; i++ {
-		buf.WriteString(fmt.Sprintf("%010d 00000 n \n", offsets[i]))
+		fmt.Fprintf(&buf, "%010d 00000 n \n", offsets[i])
 	}
-	buf.WriteString(fmt.Sprintf("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", xref))
+	fmt.Fprintf(&buf, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", xref)
 
 	return buf.Bytes()
 }

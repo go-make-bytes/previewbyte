@@ -1,4 +1,4 @@
-ARG GO_VERSION=1.26.4
+ARG GO_VERSION=1.26.5
 
 FROM golang:${GO_VERSION} AS build
 WORKDIR /src
@@ -10,7 +10,7 @@ RUN go mod download
 # the binary is fully static and needs no system libraries.
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM ghcr.io/wntrtech/scratch:v1.0.0-3
 COPY --from=build /out/server /server
 
 EXPOSE 8080/tcp

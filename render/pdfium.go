@@ -62,7 +62,7 @@ func (r *pdfiumRenderer) withDocument(in Input, fn func(inst pdfium.Pdfium, doc 
 	if err != nil {
 		return err
 	}
-	defer inst.Close()
+	defer func() { _ = inst.Close() }()
 
 	data := in.Bytes
 	opened, err := inst.OpenDocument(&requests.OpenDocument{File: &data})
@@ -219,7 +219,7 @@ func (r *pdfiumRenderer) Ready(_ context.Context) error {
 	if err != nil {
 		return err
 	}
-	inst.Close()
+	_ = inst.Close()
 
 	return nil
 }

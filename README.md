@@ -1,70 +1,229 @@
 # previewbyte
 
-A reusable, security-hardened **document preview / render** service. Given a
-document — by reference to a document source, or by raw bytes — it returns a
-**safe, review-only rendering**: inert per-page images plus an optional plain-text
-layer, with **no active content** and **no signature placement**, so a person can
-read a document before they sign, send, or share it.
+A reusable, security-hardened **document preview / render** service. Given a document — by reference to a document source — it opens the bytes and returns a **safe, review-only rendering**: inert per-page raster images plus an optional plain-text layer. The output is images, text, and JSON only; no interpretable document and no active content ever reach the caller. A person can read a document before they sign, send, or share it, without any product ever rendering the raw bytes inline.
 
-It is the one place that **opens untrusted document bytes**, so its whole reason to
-exist is to do that dangerous, complex job **once, behind hard isolation**, instead
-of every product rendering inline.
+It is the **one place in the platform that opens untrusted document bytes**, so its whole reason to exist is to do that dangerous, complex job **once, behind hard isolation**. The parser is PDFium compiled to **WebAssembly** and run inside a pure-Go runtime (an isolated, memory-bounded module with no ambient access to the network or filesystem); the container around it adds a second layer — no egress, a read-only filesystem, dropped capabilities, and resource caps. A parse of malicious input is contained to one job and can reach neither the host nor the rest of the fleet.
 
-## What it does
+It holds **no durable data** — the document source owns the bytes — and **no signing crypto**. It reads the source **on behalf of the user** via delegated-token exchange, so the source's owner-filtering holds end-to-end and the service can never see a document the caller could not. Cross-cutting concerns (logging with redaction, tracing, correlation) are installed once by the shared platform library and are never wired per service.
 
-- **Renders to an inert preview** — per-page raster images (PNG) and an optional
-  extracted text layer for accessibility and search. The output is images, text,
-  and JSON only; no interpretable document and no active content ever reach the
-  caller.
-- **Reads the source on behalf of the user.** A user-owned document is fetched with
-  a delegated token, so the source's owner-filtering holds end-to-end and the
-  service can never see a document the caller could not.
-- **Runs the parser in a sandbox.** The PDF engine is PDFium compiled to
-  WebAssembly and run inside a pure-Go runtime — an isolated, memory-bounded module
-  with no ambient access to the network or filesystem. A parser fault is contained
-  to one job. The container around it adds no egress, a read-only filesystem, and
-  resource caps.
-- **Bounds every render** — input size cap, content-type sniff + allowlist (the
-  declared type is never trusted), page-count and output-dimension caps, and a
-  render timeout.
+Its HTTP surface is a small, DPoP-gated, scope-checked read API for a backend-for-frontend, plus two unauthenticated probes. It renders no human UI and persists nothing.
 
-It holds **no durable data** (the document source owns the bytes) and **no signing
-crypto**. Audit of a user-facing preview view is emitted by the caller that knows
-the actor is a person (the portal backend), not by this background renderer.
+---
 
-## API
+## Where it sits
 
-Base path `/api/v1`. Inbound calls are authenticated and require the `preview:read`
-scope; user-owned renders are performed on behalf of the user.
+`previewbyte` is one service in a small set, and it never faces the browser directly. The backend-for-frontend (**portal-api**) authenticates the end user and forwards a preview request carrying a service token for this service's audience. `previewbyte` then reads the document bytes from **document-store** — going out **on behalf of the same user** via token exchange — and renders them inside the WebAssembly sandbox. The rendered images and text stream straight back through the caller; nothing is stored.
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/v1/previews/{documentId}` | the preview manifest (page list + dimensions + inert references), or a typed `{renderable:false, reason}` result for a non-previewable type |
-| `GET /api/v1/previews/{documentId}/pages/{n}` | one rendered, inert page image |
-| `GET /api/v1/previews/{documentId}/text` | the optional plain-text layer (404 when none) |
-| `GET /healthz` · `GET /readyz` | liveness · readiness (the render engine is live) |
+```mermaid
+flowchart LR
+    Browser["Browser / SPA<br/>(the human reviewer)"]
 
-A non-previewable type returns `{renderable:false, reason:"unsupported_format", mime}`
-so the caller can offer "download to review" — never an error to guess at.
+    subgraph Fleet["platform deployment"]
+        direction TB
+        BFF["portal-api<br/>(backend-for-frontend)<br/>authenticates the user"]
+        PV["previewbyte<br/>(this service)<br/>WASM-sandboxed renderer"]
+        DS[("document-store<br/>owns the bytes + hashes<br/>owner-filters on the user")]
+    end
+
+    Browser -- "view preview" --> BFF
+    BFF -- "GET /api/v1/previews/... (service token,<br/>on-behalf-of the user)" --> PV
+    PV -- "read metadata + content<br/>on-behalf-of the user (token exchange)" --> DS
+    PV -. "inert page images · text · JSON" .-> BFF
+    BFF -. "renders to the browser" .-> Browser
+```
+
+Division of labour: **portal-api** owns the human session, the user-facing audit of "who viewed what" (it is the tier that knows the actor is a person), and delivery to the browser. **document-store** owns the durable bytes and the owner-filtering. `previewbyte` owns exactly one thing — turning bytes into an inert, review-only rendering behind isolation — and owns no state of its own. The two meet at a delegated (on-behalf-of) token: `previewbyte` reads document-store with the *user's* authority, never its own, so it can only ever render a document the user could already read.
+
+---
+
+## HTTP surface
+
+The `/api/v1` surface is DPoP-authenticated and requires the `preview:read` scope (modelled as a `group:level` pair). Every document read underneath it goes out on behalf of the user. Application errors use the shared RFC 9457 problem envelope; the two probes return a plain `{status}` body so an orchestrator gets a uniform signal.
+
+| Method + path | Purpose | Notes |
+|---|---|---|
+| `GET /api/v1/previews/{documentId}` | Preview manifest — page list, per-page pixel dimensions, and the inert references to fetch | Returns a typed `{renderable:false, reason, mime}` result (200) for a non-previewable type, so the caller can offer "download to review" — never an error to guess at |
+| `GET /api/v1/previews/{documentId}/pages/{n}` | One rendered, inert page image | Zero-based page index; `image/png` with `Cache-Control: no-store`; `404` for a page past the end, `415` for an unsupported document |
+| `GET /api/v1/previews/{documentId}/text` | The optional plain-text layer (one entry per page) | `404` when the document has no extractable text |
+| `GET /healthz` | Liveness | `200` whenever the process is up; skips the access log |
+| `GET /readyz` | Readiness | `503` when the render-engine pool cannot hand out a live instance, else `200` |
+
+A read that hits an unconfigured document source fails closed with `503` (`err:preview:notConfigured`). A source not-found — which is also how document-store reports a document the user does *not* own — maps to this service's own `404`, never another user's content. Any other upstream error is **relayed** (its terminal code, source, and trace id preserved and this hop appended) rather than collapsed to a bare gateway error; a server-side upstream failure maps to `502`, and a transport failure with no HTTP response at all becomes a uniform `err:upstream:unavailable` (`502`).
+
+---
+
+## Architecture
+
+One application object (`App` in [`app.go`](app.go)) wires every dependency at startup and **fails closed** on misconfiguration — a bad auth issuer, an invalid render cap, or an unusable WebAssembly pool stops the process from starting. The renderer is an interface (`render.Renderer`); the only production implementation is PDFium-on-WebAssembly, so the untrusted-input boundary is a single, swappable seam.
+
+```mermaid
+flowchart TB
+    subgraph App["App (app.go) — built once by New()"]
+        Init["init(): platform setup + redaction →<br/>inbound DPoP auth → outbound service client →<br/>document-store client → WASM renderer pool"]
+    end
+
+    subgraph Routes["routes/ — HTTP handlers"]
+        PM["previews.go<br/>manifest · page · text"]
+        HP["health.go<br/>healthz · readyz"]
+        RS["response.go<br/>manifest / not-renderable / text-layer shapes"]
+    end
+
+    subgraph Clients["clients/ — outbound, on-behalf-of the user"]
+        DOC["Documents<br/>metadata + content reads<br/>(fail-closed without a subject token)"]
+    end
+
+    subgraph Render["render/ — the untrusted-input boundary"]
+        R["Renderer interface<br/>Inspect · RenderPage · Text · Ready"]
+        PDF["pdfiumRenderer<br/>PDFium → WebAssembly (wazero)<br/>pool of isolated instances"]
+        CAPS["Config caps + Sniff<br/>size · pages · dimensions · timeout · MIME allowlist"]
+    end
+
+    Routes --> App
+    PM -- "read on-behalf" --> DOC
+    PM -- "Inspect / RenderPage / Text" --> R
+    R --> PDF
+    PDF --> CAPS
+    DOC -- "delegated token exchange" --> DS[("document-store")]
+```
+
+A request flows: authenticate + scope-check → read bytes from document-store on behalf of the user → size-cap and content-type **sniff** (the declared MIME is never trusted) → render inside the sandbox → return inert output.
+
+```mermaid
+sequenceDiagram
+    participant BFF as portal-api
+    participant PV as previewbyte
+    participant DS as document-store
+    participant W as WASM PDFium
+
+    BFF->>PV: GET /api/v1/previews/{id} (service token, on-behalf-of user)
+    PV->>PV: authenticate (DPoP) + require preview:read
+    PV->>DS: GET metadata (on-behalf-of user, token exchange)
+    DS-->>PV: {mime, size, contentHash} (or 404 if not owned)
+    PV->>PV: reject by declared size before transferring bytes
+    PV->>DS: GET content (on-behalf-of user)
+    DS-->>PV: document bytes (decrypted on read)
+    PV->>PV: size cap + Sniff(bytes) vs MIME allowlist
+    alt sniffed type not on allowlist
+        PV-->>BFF: 200 {renderable:false, reason:"unsupported_format", mime}
+    else supported
+        PV->>+W: OpenDocument in an isolated WASM instance
+        W-->>-PV: page count + per-page dimensions (inert)
+        PV-->>BFF: 200 manifest (page list + inert references)
+        Note over PV,W: page/text endpoints re-fetch bytes and<br/>rasterize / extract text in the sandbox on demand
+    end
+```
+
+---
+
+## The sandbox / untrusted-input boundary
+
+Opening arbitrary document bytes is the single most dangerous operation in the platform, so it is isolated twice over.
+
+- **Inner sandbox — WebAssembly.** The PDF engine is [PDFium](https://pdfium.googlesource.com/pdfium/) compiled to **WebAssembly** and executed inside a pure-Go [wazero](https://wazero.io/) runtime. The binary is embedded in the render library and pinned by checksum, so there is no external blob and no runtime download. The parser runs in an isolated linear-memory module with **no ambient access to the network or filesystem** — a parser fault, a malformed object graph, or an exploit attempt is contained to one job and cannot reach the host process. CGO is disabled, so the shipped binary is fully static with no system-library attack surface.
+- **Outer sandbox — the container.** The service opens untrusted content, so the container is run locked down (enforced by the orchestrator, not the image): **no network egress**, a **read-only root filesystem** with a small tmpfs scratch mount, **no added capabilities** and no privilege escalation, running as a non-root user on a minimal rootless scratch base, with memory and CPU limits. This is defence-in-depth around the WASM isolation — a least-privilege posture on top of an already-isolated parser.
+- **Bounded render.** Every parse is capped before and during execution: an input **size cap** rejects oversized bytes before any parse; a content-type **sniff + allowlist** ignores the declared MIME entirely (the bytes decide the type); a **page-count cap** and **output-dimension cap** (max DPI clamped so a rendered page never exceeds the max width) stop render-bombs; and a **render timeout** kills a runaway job. A pool of WASM instances bounds concurrency.
+- **Inert output only.** The renderer emits raster images (PNG), extracted plain text, and structured metadata — never an interpretable document and never any active content (no scripts, no embedded actions, no forms). A document the engine cannot open, or a type off the allowlist, becomes a **typed not-renderable result** (`unsupported_format` / `too_large` / `too_many_pages`), not a raw engine or stack message — the internal error text never crosses the boundary to the caller.
+
+---
+
+## State and data model
+
+**The service holds no durable data and no signing keys.** There is no database, no object storage, and no cache: document bytes are streamed from document-store on behalf of the user, rendered in memory, and returned. The bytes are sensitive (document-store decrypts them on read) and are never persisted or logged. Redaction is installed by the platform library before any handler can log a field.
+
+Because the durable authority is document-store, owner-filtering holds end-to-end: `previewbyte` acts only with the user's delegated authority, so it can render exactly the documents that user could fetch directly — no more. It authors no audit event itself; the audit of a human viewing a preview is emitted by portal-api, the tier that knows the actor is a person (GDPR data minimisation — this background renderer records nothing about who viewed what).
+
+---
 
 ## Configuration
 
-| Env | Purpose |
-|---|---|
-| `AUTH_ISSUER_URL` / `SERVICE_AUDIENCE` (`svc:preview`) | inbound token validation + this service's audience |
-| `SERVICE_CLIENT_ID` (`svc:preview`) / `SERVICE_CLIENT_SECRET[_FILE]` | the service identity used for the on-behalf token exchange |
-| `DOCUMENT_BASE_URL` / `DOCUMENT_AUDIENCE` (`svc:document`) | the first document source |
-| `RENDER_MODE` (`raster`) · `RENDER_MAX_DPI` · `RENDER_MAX_WIDTH` · `RENDER_IMAGE_FORMAT` (`png`) | output strategy + dimension caps |
-| `RENDER_TIMEOUT` · `RENDER_MAX_PAGES` · `RENDER_POOL_SIZE` · `INPUT_MAX_BYTES` | render bounds + engine pool size |
-| `SUPPORTED_MIME` | the content-type allowlist (sniffed, not declared) |
+Standard fleet env (`SERVER_URLS`, `SERVICE_NAME`, `ENVIRONMENT`, `LOG_*`, `METRICS_ENABLED`, `OTEL_*`) comes from the shared base configuration, plus:
 
-No database, no object storage, and no signing keys: the service talks to the
-document source over HTTP on behalf of the user and renders in memory.
+| Env var | Default | Meaning |
+|---|---|---|
+| `AUTH_ISSUER_URL` | — (required) | Inbound token issuer for DPoP validation |
+| `SERVICE_AUDIENCE` | `svc:preview` | This service's own audience — the value an inbound service token must target |
+| `SERVICE_CLIENT_ID` | `svc:preview` | Service identity used for the outbound on-behalf-of token exchange |
+| `SERVICE_CLIENT_SECRET` | — | Client secret for that identity. Secret: also resolved via the `SERVICE_CLIENT_SECRET_FILE` convention (a secret-store / Vault-agent file); an explicit env value still overrides it |
+| `OUTBOUND_ISSUER_URL` | — (⇒ `AUTH_ISSUER_URL`) | In-network address the outbound token mint is called at (the issuer claim stays the inbound issuer) |
+| `DOCUMENT_BASE_URL` | — (empty ⇒ by-reference preview fails closed) | Base URL of the document source (document-store) |
+| `DOCUMENT_AUDIENCE` | `svc:document` | Target audience for the delegated token used to read the source |
+| `RENDER_MODE` | `raster` | Output strategy (raster only in this build) |
+| `RENDER_MAX_DPI` | `150` | Maximum render DPI (≤ 600) |
+| `RENDER_MAX_WIDTH` | `2048` | Maximum rendered page width in px (≤ 8192); DPI is clamped down so no page exceeds it |
+| `RENDER_IMAGE_FORMAT` | `png` | Output image format (PNG only in this build) |
+| `RENDER_TIMEOUT` | `20s` | Per-render time ceiling — kills a runaway job |
+| `RENDER_MAX_PAGES` | `100` | Page-count cap — a document above it is not-renderable |
+| `RENDER_POOL_SIZE` | `2` | Number of WebAssembly engine instances (bounds concurrency) |
+| `INPUT_MAX_BYTES` | `64 MiB` | Input size cap — larger inputs are rejected before any parse |
+| `SUPPORTED_MIME` | `application/pdf` | Content-type allowlist, comma-separated; matched against the **sniffed** type, never the declared one |
+| `DEV_ACCEPT_USER_TOKEN` | `false` | **Development only** — accept the demo SPA's public-client user token and relax per-endpoint scope checks. Never enable in production |
+| `DEV_USER_TOKEN_AUDIENCE` | `portal-api` | Audience accepted when the dev concession above is on |
 
-## Scope (this build)
+---
 
-Renders **PDF** to PNG page images plus a text layer, reading from the document
-source on behalf of the user. WebP output, an ephemeral encrypted cache, Office
-formats (via a converter), a sanitized-PDF mode, and a direct-bytes mode are
-later additions; this build returns a typed not-renderable result for anything
-outside the allowlist.
+## Directory layout
+
+```
+previewbyte/
+├── app.go, config.go, testing.go   — App container, configuration + render caps, test harness (TestApp)
+├── cmd/server/                     — CLI entrypoint
+│   ├── main.go                     — cobra root; default SERVER_URLS
+│   ├── web.go                      — `web` subcommand: build App + register routes + serve
+│   └── health.go                   — `health` subcommand: container HEALTHCHECK probe
+├── routes/                         — HTTP handlers
+│   ├── router.go                   — route registration + preview:read scope gate
+│   ├── previews.go                 — manifest · page image · text; on-behalf read; error mapping
+│   ├── response.go                 — Manifest / PageRef / NotRenderable / TextLayer shapes
+│   └── health.go                   — healthz · readyz
+├── clients/                        — outbound, on-behalf-of the user
+│   ├── clients.go                  — shared on-behalf request (token exchange, fail-closed, HTTPError)
+│   └── document.go                 — document-store client (metadata + content)
+├── render/                         — the untrusted-input boundary
+│   ├── render.go                   — Renderer interface, Config caps, Sniff, typed outcomes
+│   ├── pdfium.go                   — PDFium-on-WebAssembly (wazero) implementation + instance pool
+│   └── render_test.go              — integration test against the real WASM engine
+└── Dockerfile                      — static (CGO-off) build → rootless scratch (nonroot); hardening note
+```
+
+---
+
+## Development
+
+The module is a standard Go build with no CGO and no external services in the test path. Because the PDF engine is embedded WebAssembly, the render integration test drives the **real** engine in-process — no Docker, no network, no fixture download.
+
+```bash
+# Build the static server binary (matches the Dockerfile).
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o server ./cmd/server
+
+go vet ./...
+go test ./...        # includes render/render_test.go — a real PDF through the real WASM PDFium engine
+
+# Exercise just the engine end-to-end (inspect → render PNG → extract text):
+go test ./render/ -run TestPDFium -v
+
+# Run locally.
+DOCUMENT_BASE_URL=http://localhost:19000 AUTH_ISSUER_URL=http://localhost:8080 ./server web
+```
+
+`render_test.go` builds a valid single-page PDF in code and asserts it inspects to one page, rasterizes to a decodable PNG, and yields its text layer — plus the negative paths (non-PDF → `unsupported_format`, out-of-range page → `page_out_of_range`, page cap → `too_many_pages`). The handler tests in `routes/` run against a stubbed on-behalf transport and a fake renderer, so they cover the auth/scope/on-behalf/error-mapping logic without a real engine or source. `testing.go` exposes `TestApp` for both.
+
+---
+
+## Security invariants
+
+- **Untrusted bytes only ever open inside the sandbox.** The parser is PDFium-on-WebAssembly in a wazero runtime — isolated linear memory, no ambient network or filesystem — and CGO is off, so the binary is static. A parser fault is contained to one job.
+- **Defence in depth at the container.** Run with no egress, a read-only root filesystem + tmpfs scratch, dropped capabilities, no privilege escalation, non-root on a minimal scratch base, and memory/CPU limits (least-privilege posture).
+- **Inert output only.** Images, text, and JSON — never an interpretable document, never active content. Internal engine/stack error text never crosses to the caller; a non-renderable input is a *typed* result, not a leaked message.
+- **The declared type is never trusted.** Content is sniffed from the bytes and matched against an allowlist; anything off it is not-renderable.
+- **Every render is bounded.** Input-size cap (before any parse), page-count cap, output-dimension cap, and a render timeout — no unbounded parse.
+- **On-behalf-of, fail-closed.** Document reads use the user's delegated authority via token exchange, never the service's own identity; a call without a subject token fails closed rather than falling back. Owner-filtering holds end-to-end — the service cannot see a document the caller could not.
+- **No durable data, no keys.** Nothing is persisted or cached; document bytes live only transiently in memory and are never logged. There are no signing keys.
+
+---
+
+## Known limitations
+
+- **PDF only in this build.** The engine renders [PDF (ISO 32000)](https://www.iso.org/standard/75839.html) to PNG page images plus a text layer. Any other type returns a typed not-renderable result. WebP output, Office formats (via a converter), a sanitized-PDF mode, and a direct-bytes (by-value) mode are later additions; today the only input path is by reference to the document source.
+- **No cache.** Every request re-fetches the source bytes and re-renders. The manifest's `expiresAt` is a presentation hint only until an (ephemeral, encrypted) cache is added; there is no persistence layer.
+- **Single document source.** One `DOCUMENT_BASE_URL` is wired; multiple sources are not yet supported. With no source configured, the by-reference preview fails closed (`503`).
+- **Text extraction is best-effort.** The plain-text layer is whatever the engine can extract; a scanned/image-only PDF has no extractable text and the text endpoint returns `404` (no OCR).
