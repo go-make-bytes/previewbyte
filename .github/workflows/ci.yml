@@ -48,6 +48,9 @@ jobs:
   # Short fuzz sweep — every Fuzz* target (render/fuzz_test.go: the P0 malicious-
   # PDF/bomb abuse corpus for the untrusted-input backends) runs 30s so this, the
   # one service that opens untrusted document bytes, never regresses to a panic.
+  # Loops per package, never a bare `./...` — `go test -fuzz` rejects a package
+  # pattern that expands to more than one package, which this (multi-package)
+  # service always does ("cannot use -fuzz flag with multiple packages").
   fuzz-short:
     runs-on: ubuntu-latest
     steps:
@@ -59,9 +62,11 @@ jobs:
           cache-dependency-path: go.sum
       - name: Fuzz (30s per target)
         run: |
-          targets=$(go test -list '^Fuzz' ./... 2>/dev/null | grep '^Fuzz' || true)
-          for t in $targets; do
-            go test -run '^$' -fuzz "^${t}\$" -fuzztime 30s ./...
+          for pkg in $(go list ./...); do
+            targets=$(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
+            for t in $targets; do
+              go test -run '^$' -fuzz "^${t}\$" -fuzztime 30s "$pkg"
+            done
           done
 
   image:
