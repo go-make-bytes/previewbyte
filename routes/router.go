@@ -8,6 +8,10 @@ import (
 
 	"azugo.io/azugo"
 	corehttp "azugo.io/core/http"
+	"go.uber.org/zap"
+
+	"github.com/gmb-lib/go-platform-kit/broker"
+	"github.com/gmb-lib/go-sec-events/secevents"
 )
 
 type router struct {
@@ -43,18 +47,37 @@ func Init(a *previewbyte.App) error {
 // requireScope rejects callers without the given scope group at the given level.
 // The development-only user-token concession relaxes the check (it accepts the demo
 // app's public-client token, which carries no service scopes); it is never on in
-// production.
+// production. A denial is also a NIS2-audit security event — previewbyte's own
+// inbound boundary is the one thing only it can see with full fidelity.
 func (r *router) requireScope(group, level string) azugo.RequestHandlerFunc {
 	relaxed := r.DevAcceptUserToken()
+	requiredScope := group + ":" + level
 
 	return func(next azugo.RequestHandler) azugo.RequestHandler {
 		return func(ctx *azugo.Context) {
 			if !relaxed && !ctx.User().HasScopeLevel(group, level) {
+				r.denied(ctx, requiredScope)
 				ctx.Error(corehttp.ForbiddenError{})
 
 				return
 			}
 			next(ctx)
 		}
+	}
+}
+
+// denied emits the platform-standard authz.denied security event on a scope
+// denial. Mirrors document-store's Audit().Denied — same event, same call shape.
+func (r *router) denied(ctx *azugo.Context, requiredScope string) {
+	sec := r.SecEvents()
+	if sec == nil {
+		return
+	}
+	if err := sec.AuthZDenied(ctx, secevents.Denial{
+		Actor:         broker.Actor{ID: ctx.User().ID(), Type: "service"},
+		RequiredScope: requiredScope,
+		Reason:        "missing scope",
+	}); err != nil {
+		ctx.Log().Error("secevents denied emit failed", zap.Error(err))
 	}
 }

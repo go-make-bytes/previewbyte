@@ -3,6 +3,7 @@ package render
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -62,4 +63,34 @@ func TestDispatchReady(t *testing.T) {
 func TestDispatchCloseIsSafe(t *testing.T) {
 	r := testDispatch(t)
 	r.Close()
+}
+
+// Without OfficeConverterURL set, Office MIME types are simply absent from the
+// dispatcher — the same outcome as any other unconfigured type, not a failure.
+func TestDispatchOfficeAbsentWhenNotConfigured(t *testing.T) {
+	r := testDispatch(t) // built with no OfficeConverterURL
+	defer r.Close()
+
+	_, err := r.Inspect(context.Background(), Input{Bytes: []byte("x"), Mime: MimeDocx})
+	qt.Assert(t, qt.IsTrue(errors.Is(err, ErrUnsupportedFormat)))
+}
+
+// With OfficeConverterURL set, all three Office MIME types route to the office
+// backend.
+func TestDispatchOfficeRoutedWhenConfigured(t *testing.T) {
+	srv := stubConverter(t, http.StatusOK, "application/pdf", samplePDF())
+	r, err := NewDispatch(Config{
+		PoolSize: 1, MaxDPI: 150, MaxWidth: 2048, ImageFormat: "png",
+		Timeout: 20 * time.Second, MaxPages: 100, InputMaxBytes: 64 << 20,
+		OfficeConverterURL: srv.URL, OfficeConverterTimeout: 5 * time.Second,
+	})
+	qt.Assert(t, qt.IsNil(err))
+	defer r.Close()
+	ctx := context.Background()
+
+	for _, mime := range []string{MimeDocx, MimeXlsx, MimePptx} {
+		doc, err := r.Inspect(ctx, Input{Bytes: []byte("stub ignores this"), Mime: mime})
+		qt.Assert(t, qt.IsNil(err), qt.Commentf(mime))
+		qt.Assert(t, qt.Equals(doc.Format, "office"), qt.Commentf(mime))
+	}
 }

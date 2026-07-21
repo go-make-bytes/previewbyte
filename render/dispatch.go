@@ -14,8 +14,10 @@ type dispatchRenderer struct {
 	pdf    Renderer // the one backend with a real resource pool; readyz proves it live
 }
 
-// NewDispatch builds the PDF, image, and text backends and wires them behind one
-// Renderer, keyed by sniffed MIME.
+// NewDispatch builds the PDF, image, text, and (when configured) Office backends
+// and wires them behind one Renderer, keyed by sniffed MIME. The Office backend is
+// built and registered only when cfg.OfficeEnabled(): an unconfigured converter
+// means those MIME types are simply absent from the map, not present-but-failing.
 func NewDispatch(cfg Config) (Renderer, error) {
 	pdf, err := NewPDFium(cfg)
 	if err != nil {
@@ -24,16 +26,21 @@ func NewDispatch(cfg Config) (Renderer, error) {
 	img := NewImage(cfg)
 	txt := NewText(cfg)
 
-	return &dispatchRenderer{
-		pdf: pdf,
-		byMime: map[string]Renderer{
-			"application/pdf": pdf,
-			"image/png":       img,
-			"image/jpeg":      img,
-			"image/gif":       img,
-			"text/plain":      txt,
-		},
-	}, nil
+	byMime := map[string]Renderer{
+		"application/pdf": pdf,
+		"image/png":       img,
+		"image/jpeg":      img,
+		"image/gif":       img,
+		"text/plain":      txt,
+	}
+	if cfg.OfficeEnabled() {
+		office := NewOffice(cfg, pdf)
+		for _, m := range OfficeMimeTypes() {
+			byMime[m] = office
+		}
+	}
+
+	return &dispatchRenderer{pdf: pdf, byMime: byMime}, nil
 }
 
 func (d *dispatchRenderer) backend(mime string) (Renderer, error) {

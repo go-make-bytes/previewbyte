@@ -25,6 +25,7 @@ import (
 
 	"github.com/gmb-lib/go-authbyte/authclient"
 	"github.com/gmb-lib/go-platform-kit/platform"
+	"github.com/gmb-lib/go-sec-events/secevents"
 
 	"github.com/go-make-bytes/previewbyte/clients"
 	"github.com/go-make-bytes/previewbyte/render"
@@ -53,6 +54,11 @@ type App struct {
 	// renderer turns document bytes into an inert preview inside the isolated
 	// WebAssembly runtime. Always present after init.
 	renderer render.Renderer
+
+	// secEvents emits NIS2-audit security events for previewbyte's own inbound
+	// boundary (e.g. a scope denial) — the platform-standard LogSink, ships via the
+	// existing log pipeline to the SIEM. Always present after init.
+	secEvents *secevents.Emitter
 }
 
 // New constructs the application.
@@ -101,6 +107,11 @@ func (a *App) init() error {
 	}
 	a.authMW = a.authClient.Authenticate()
 
+	// NIS2-audit emitter (always on — the platform-standard control every backend
+	// service carries; LogSink needs nothing beyond the request logger already
+	// installed by platform.Setup above, so this adds no new infrastructure).
+	a.secEvents = secevents.NewEmitter(secevents.NewLogSink())
+
 	// Outbound DPoP service client — reads the source on behalf of the user.
 	if cfg.OutboundEnabled() {
 		a.outboundClient, err = authclient.New(cfg.OutboundAuthClientConfig())
@@ -121,6 +132,10 @@ func (a *App) init() error {
 	// PDF path opens a document inside the WASM sandbox; a parser fault there fails
 	// one job. The image/text backends carry no untrusted-parser risk beyond what
 	// the platform already trusts (stdlib image decoders; our own vendored font).
+	// When OFFICE_CONVERTER_URL is set, a fourth backend converts Office documents
+	// to PDF via that converter and delegates rendering to the same PDF path; when
+	// it's unset, Office MIME types are simply absent from what this instance can
+	// preview — no failure mode, the same as any other unconfigured type.
 	a.renderer, err = render.NewDispatch(cfg.RenderConfig())
 	if err != nil {
 		return fmt.Errorf("previewbyte: renderer: %w", err)
@@ -154,6 +169,12 @@ func (a *App) Documents() *clients.Documents { return a.documents }
 
 // Renderer returns the preview renderer.
 func (a *App) Renderer() render.Renderer { return a.renderer }
+
+// SecEvents returns the NIS2-audit security-event emitter.
+func (a *App) SecEvents() *secevents.Emitter { return a.secEvents }
+
+// SetSecEvents overrides the security-event emitter (test use only).
+func (a *App) SetSecEvents(e *secevents.Emitter) { a.secEvents = e }
 
 // DevAcceptUserToken reports whether the development-only user-token concession is
 // on (scope checks are then relaxed). Always false in production.

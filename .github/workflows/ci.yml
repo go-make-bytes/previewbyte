@@ -45,9 +45,24 @@ jobs:
       - name: Test (race + coverage)
         run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
 
-      # EDIT (optional): a repo with an untrusted-input parser adds a short fuzz gate, e.g.
-      # - name: Fuzz (short)
-      #   run: go test ./<pkg> -run '^$' -fuzz '^Fuzz<Name>$' -fuzztime 30s
+  # Short fuzz sweep — every Fuzz* target (render/fuzz_test.go: the P0 malicious-
+  # PDF/bomb abuse corpus for the untrusted-input backends) runs 30s so this, the
+  # one service that opens untrusted document bytes, never regresses to a panic.
+  fuzz-short:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Fuzz (30s per target)
+        run: |
+          targets=$(go test -list '^Fuzz' ./... 2>/dev/null | grep '^Fuzz' || true)
+          for t in $targets; do
+            go test -run '^$' -fuzz "^${t}\$" -fuzztime 30s ./...
+          done
 
   image:
     needs: test

@@ -43,6 +43,8 @@ github.com/gmb-lib/go-authbyte v0.15.0 h1:8HtLIEveSe0UnzJolKBi8auj+F3Jta0gxG3ufG
 github.com/gmb-lib/go-authbyte v0.15.0/go.mod h1:vKKqhZUUR1yd/lNlp+ajToU5EToSYbPJkwcsyVgXLQI=
 github.com/gmb-lib/go-platform-kit v1.7.0 h1:3AMigeiSwiuEtFzNvDchITyqFCvSfZXhredZhbS7WsU=
 github.com/gmb-lib/go-platform-kit v1.7.0/go.mod h1:s51aADXBpyFJfe5sQvsy6yqsda5uSCJylGzFHIiTmaY=
+github.com/gmb-lib/go-sec-events v1.1.1 h1:7Ps1On1K2aLlwqlBFHA2avLpJzXdGgV8MI7l7Q2tAzM=
+github.com/gmb-lib/go-sec-events v1.1.1/go.mod h1:TsYHxj2jdimnUDQseU3zqFUSk007+jNsrO/Cq5zr0QY=
 github.com/go-jose/go-jose/v4 v4.1.4 h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=
 github.com/go-jose/go-jose/v4 v4.1.4/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=

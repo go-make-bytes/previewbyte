@@ -94,6 +94,11 @@ func (r *router) previewManifest(ctx *azugo.Context) {
 
 	doc, err := r.Renderer().Inspect(ctx, render.Input{Bytes: content, Mime: sniff})
 	if err != nil {
+		if errors.Is(err, render.ErrUpstreamUnavailable) {
+			r.upstreamUnavailable(ctx, err)
+
+			return
+		}
 		if reason, ok := renderableReason(err); ok {
 			ctx.JSON(NotRenderable{DocumentID: id, Reason: reason, Mime: sniff})
 
@@ -156,6 +161,11 @@ func (r *router) previewPage(ctx *azugo.Context) {
 
 			return
 		}
+		if errors.Is(err, render.ErrUpstreamUnavailable) {
+			r.upstreamUnavailable(ctx, err)
+
+			return
+		}
 		if reason, ok := renderableReason(err); ok {
 			r.unsupported(ctx, reason)
 
@@ -196,6 +206,11 @@ func (r *router) previewText(ctx *azugo.Context) {
 
 	texts, err := r.Renderer().Text(ctx, render.Input{Bytes: content, Mime: sniff})
 	if err != nil {
+		if errors.Is(err, render.ErrUpstreamUnavailable) {
+			r.upstreamUnavailable(ctx, err)
+
+			return
+		}
 		if reason, ok := renderableReason(err); ok {
 			r.unsupported(ctx, reason)
 
@@ -335,6 +350,16 @@ func (r *router) renderFailed(ctx *azugo.Context, err error) {
 	ctx.Log().Warn("preview render failed", zap.Error(err))
 	ctx.Error(pkerrors.NewProblem("err:preview:renderFailed",
 		pkerrors.WithStatus(fasthttp.StatusInternalServerError)))
+}
+
+// upstreamUnavailable reports that a render backend's remote dependency (the
+// Office document converter) could not be reached — a 502, distinct from both a
+// not-renderable input (200 typed result) and a rendering bug (500): this is
+// "try again," not "download to review."
+func (r *router) upstreamUnavailable(ctx *azugo.Context, err error) {
+	ctx.Log().Warn("preview render backend unavailable", zap.Error(err))
+	ctx.Error(pkerrors.NewProblem("err:preview:upstreamUnavailable",
+		pkerrors.WithStatus(fasthttp.StatusBadGateway)))
 }
 
 // unsupported reports a typed unsupported-input result on the image/text endpoints;

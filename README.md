@@ -2,7 +2,7 @@
 
 A reusable, security-hardened **document preview / render** service. Given a document — by reference to a document source — it opens the bytes and returns a **safe, review-only rendering**: inert per-page raster images plus an optional plain-text layer. The output is images, text, and JSON only; no interpretable document and no active content ever reach the caller. A person can read a document before they sign, send, or share it, without any product ever rendering the raw bytes inline.
 
-It is the **one place in the platform that opens untrusted document bytes**, so its whole reason to exist is to do that dangerous, complex job **once, behind hard isolation**. PDF is parsed by PDFium compiled to **WebAssembly** and run inside a pure-Go runtime (an isolated, memory-bounded module with no ambient access to the network or filesystem); the container around it adds a second layer — no egress, a read-only filesystem, dropped capabilities, and resource caps. A parse of malicious input is contained to one job and can reach neither the host nor the rest of the fleet. Common raster images (PNG/JPEG/GIF) and plain text/Markdown are rendered by two lighter backends that carry no comparable parser risk — the Go standard library's own image decoders, and a rasterizer using previewbyte's own vendored font — dispatched by the sniffed content type behind the same `Renderer` interface.
+It is the **one place in the platform that opens untrusted document bytes**, so its whole reason to exist is to do that dangerous, complex job **once, behind hard isolation**. PDF is parsed by PDFium compiled to **WebAssembly** and run inside a pure-Go runtime (an isolated, memory-bounded module with no ambient access to the network or filesystem); the container around it adds a second layer — no egress, a read-only filesystem, dropped capabilities, and resource caps. A parse of malicious input is contained to one job and can reach neither the host nor the rest of the fleet. Common raster images (PNG/JPEG/GIF) and plain text/Markdown are rendered by two lighter backends that carry no comparable parser risk — the Go standard library's own image decoders, and a rasterizer using previewbyte's own vendored font. Office documents (`.docx`/`.xlsx`/`.pptx`) are converted to PDF by an external converter (Gotenberg, wrapping LibreOffice + Chromium) and then rendered through the same PDFium path — that converter is optional (unconfigured means those types simply aren't previewable, not a failure) and runs in its own container, since it is a materially bigger attack surface than anything else this service touches. All four backends are dispatched by the sniffed content type behind the same `Renderer` interface.
 
 It holds **no durable data** — the document source owns the bytes — and **no signing crypto**. It reads the source **on behalf of the user** via delegated-token exchange, so the source's owner-filtering holds end-to-end and the service can never see a document the caller could not. Cross-cutting concerns (logging with redaction, tracing, correlation) are installed once by the shared platform library and are never wired per service.
 
@@ -48,7 +48,7 @@ The `/api/v1` surface is DPoP-authenticated and requires the `preview:read` scop
 | `GET /healthz` | Liveness | `200` whenever the process is up; skips the access log |
 | `GET /readyz` | Readiness | `503` when the render-engine pool cannot hand out a live instance, else `200` |
 
-A read that hits an unconfigured document source fails closed with `503` (`err:preview:notConfigured`). A source not-found — which is also how document-store reports a document the user does *not* own — maps to this service's own `404`, never another user's content. Any other upstream error is **relayed** (its terminal code, source, and trace id preserved and this hop appended) rather than collapsed to a bare gateway error; a server-side upstream failure maps to `502`, and a transport failure with no HTTP response at all becomes a uniform `err:upstream:unavailable` (`502`).
+A read that hits an unconfigured document source fails closed with `503` (`err:preview:notConfigured`). A source not-found — which is also how document-store reports a document the user does *not* own — maps to this service's own `404`, never another user's content. Any other upstream error is **relayed** (its terminal code, source, and trace id preserved and this hop appended) rather than collapsed to a bare gateway error; a server-side upstream failure maps to `502`, and a transport failure with no HTTP response at all becomes a uniform `err:upstream:unavailable` (`502`). An unreachable **Office converter** is its own distinguishable `502` (`err:preview:upstreamUnavailable`) — "try again," not the `200 renderable:false` a genuinely unsupported type gets, and not a bare `500`.
 
 ---
 
@@ -59,7 +59,7 @@ One application object (`App` in [`app.go`](app.go)) wires every dependency at s
 ```mermaid
 flowchart TB
     subgraph App["App (app.go) — built once by New()"]
-        Init["init(): platform setup + redaction →<br/>inbound DPoP auth → outbound service client →<br/>document-store client → renderer"]
+        Init["init(): platform setup + redaction →<br/>inbound DPoP auth → NIS2 security-event emitter →<br/>outbound service client → document-store client → renderer"]
     end
 
     subgraph Routes["routes/ — HTTP handlers"]
@@ -78,6 +78,7 @@ flowchart TB
         PDF["pdfiumRenderer<br/>PDFium → WebAssembly (wazero)<br/>pool of isolated instances · PDF"]
         IMG["imageRenderer<br/>stdlib image decode + re-encode<br/>PNG · JPEG · GIF"]
         TXT["textRenderer<br/>paginated rasterized text<br/>plain text · Markdown source"]
+        OFF["officeRenderer<br/>convert via Gotenberg, then delegate<br/>.docx · .xlsx · .pptx — only when configured"]
         CAPS["Config caps + Sniff<br/>size · pages · dimensions · timeout · MIME allowlist"]
     end
 
@@ -88,6 +89,9 @@ flowchart TB
     D --> PDF
     D --> IMG
     D --> TXT
+    D -.->|"if OFFICE_CONVERTER_URL set"| OFF
+    OFF -- "convert to PDF, then delegate" --> PDF
+    OFF -.->|"HTTP, internal network only"| GB["Gotenberg<br/>(separate container —<br/>LibreOffice + Chromium)"]
     PDF --> CAPS
     IMG --> CAPS
     TXT --> CAPS
@@ -164,7 +168,9 @@ Standard fleet env (`SERVER_URLS`, `SERVICE_NAME`, `ENVIRONMENT`, `LOG_*`, `METR
 | `RENDER_MAX_PAGES` | `100` | Page-count cap — a document above it is not-renderable |
 | `RENDER_POOL_SIZE` | `2` | Number of WebAssembly engine instances (bounds concurrency) |
 | `INPUT_MAX_BYTES` | `64 MiB` | Input size cap — larger inputs are rejected before any parse |
-| `SUPPORTED_MIME` | `application/pdf,image/png,image/jpeg,image/gif,text/plain` | Content-type allowlist, comma-separated; matched against the **sniffed** type, never the declared one. A `.md` upload sniffs as `text/plain` (there is no distinct signature for Markdown) and is rendered as plain text, never as rendered Markdown |
+| `SUPPORTED_MIME` | `application/pdf,image/png,image/jpeg,image/gif,text/plain` | Content-type allowlist, comma-separated; matched against the **sniffed** type, never the declared one. A `.md` upload sniffs as `text/plain` (there is no distinct signature for Markdown) and is rendered as plain text, never as rendered Markdown. Office MIME types are added automatically when `OFFICE_CONVERTER_URL` is set (below) — this list never needs editing to turn that on |
+| `OFFICE_CONVERTER_URL` | *(empty)* | Base URL of an Office-document converter (Gotenberg). **Empty = Office preview is off** — `.docx`/`.xlsx`/`.pptx` get the same `renderable:false` as any other unsupported type, not a failure; no separate feature flag |
+| `OFFICE_CONVERTER_TIMEOUT` | `30s` | The whole conversion round trip (LibreOffice startup + layout + export is seconds, not the milliseconds a WASM page render takes — a separate knob from `RENDER_TIMEOUT`) |
 | `DEV_ACCEPT_USER_TOKEN` | `false` | **Development only** — accept the demo SPA's public-client user token and relax per-endpoint scope checks. Never enable in production |
 | `DEV_USER_TOKEN_AUDIENCE` | `portal-api` | Audience accepted when the dev concession above is on |
 
@@ -180,7 +186,8 @@ previewbyte/
 │   ├── web.go                      — `web` subcommand: build App + register routes + serve
 │   └── health.go                   — `health` subcommand: container HEALTHCHECK probe
 ├── routes/                         — HTTP handlers
-│   ├── router.go                   — route registration + preview:read scope gate
+│   ├── router.go                   — route registration + preview:read scope gate + its authz.denied security event
+│   ├── router_test.go              — proves the security event fires on denial, and only on denial
 │   ├── previews.go                 — manifest · page image · text; on-behalf read; error mapping
 │   ├── response.go                 — Manifest / PageRef / NotRenderable / TextLayer shapes
 │   └── health.go                   — healthz · readyz
@@ -193,8 +200,11 @@ previewbyte/
 │   ├── pdfium.go                   — PDFium-on-WebAssembly (wazero) implementation + instance pool (PDF)
 │   ├── image.go                    — stdlib decode/re-encode + dimension caps (PNG/JPEG/GIF)
 │   ├── text.go                     — paginated rasterized text (plain text/Markdown source)
+│   ├── office.go                   — Office documents: convert via Gotenberg, delegate to PDFium
 │   ├── render_test.go              — integration test against the real WASM engine
-│   ├── dispatch_test.go, image_test.go, text_test.go — the other backends' unit tests
+│   ├── sniff_test.go                — the OOXML zip-marker disambiguation
+│   ├── fuzz_test.go                 — the P3 malicious-PDF/bomb abuse corpus (one Fuzz* target per backend)
+│   ├── dispatch_test.go, image_test.go, text_test.go, office_test.go — the other backends' unit tests
 └── Dockerfile                      — static (CGO-off) build → rootless scratch (nonroot); hardening note
 ```
 
@@ -224,19 +234,21 @@ DOCUMENT_BASE_URL=http://localhost:19000 AUTH_ISSUER_URL=http://localhost:8080 .
 
 ## Security invariants
 
-- **Untrusted bytes are only ever opened by a bounded backend.** PDF is parsed by PDFium-on-WebAssembly in a wazero runtime — isolated linear memory, no ambient network or filesystem — and CGO is off, so the binary is static; a parser fault is contained to one job. Raster images go through the Go standard library's own decoders and are always re-encoded before leaving the service. Plain text/Markdown is never parsed as a document — only word-wrapped and rasterized with previewbyte's own font.
+- **Untrusted bytes are only ever opened by a bounded backend.** PDF is parsed by PDFium-on-WebAssembly in a wazero runtime — isolated linear memory, no ambient network or filesystem — and CGO is off, so the binary is static; a parser fault is contained to one job. Raster images go through the Go standard library's own decoders and are always re-encoded before leaving the service. Plain text/Markdown is never parsed as a document — only word-wrapped and rasterized with previewbyte's own font. Office documents are the exception to "opened here": the actual parsing happens in a **separate container** (Gotenberg, a real office suite + browser engine — a materially bigger surface than anything else this service touches), reached over the network and optional by design; the PDF it returns is re-sniffed (never trusted by declared type) before it goes through the same PDFium path as any other PDF.
 - **Defence in depth at the container.** Run with no egress, a read-only root filesystem + tmpfs scratch, dropped capabilities, no privilege escalation, non-root on a minimal scratch base, and memory/CPU limits (least-privilege posture).
 - **Inert output only.** Images, text, and JSON — never an interpretable document, never active content. Internal engine/stack error text never crosses to the caller; a non-renderable input is a *typed* result, not a leaked message.
 - **The declared type is never trusted.** Content is sniffed from the bytes and matched against an allowlist; anything off it is not-renderable.
 - **Every render is bounded.** Input-size cap (before any parse), page-count cap, output-dimension cap, and a render timeout — no unbounded parse.
 - **On-behalf-of, fail-closed.** Document reads use the user's delegated authority via token exchange, never the service's own identity; a call without a subject token fails closed rather than falling back. Owner-filtering holds end-to-end — the service cannot see a document the caller could not.
 - **No durable data, no keys.** Nothing is persisted or cached; document bytes live only transiently in memory and are never logged. There are no signing keys.
+- **NIS2 security events on its own boundary.** A scope denial (an authenticated caller without `preview:read`) emits an `authz.denied` event via [`go-sec-events`](https://github.com/gmb-lib/go-sec-events) — the same platform-standard control every other backend service in the fleet carries, using its `LogSink` (structured log line → the existing Loki/alloy pipeline → SIEM; no broker, no new infrastructure). Scoped deliberately to previewbyte's own inbound boundary — the one signal only this service can see with full fidelity, unlike a caller that only ever observes the resulting `403`.
+- **Fuzzed in CI.** Every backend that opens untrusted bytes (`render/fuzz_test.go`) has a fuzz target — malicious/malformed PDF, declared-dimension image bombs, adversarial OOXML zip markers, non-UTF-8 text — run 30s per target on every push (`fuzz-short` in `.github/workflows/ci.yml`). The Office backend's outbound request target is proven invariant to document content (`TestOfficeRequestTargetIgnoresDocumentContent`) — no document payload can redirect the Gotenberg call.
 
 ---
 
 ## Known limitations
 
-- **PDF, common raster images (PNG/JPEG/GIF), and plain text/Markdown in this build.** [PDF (ISO 32000)](https://www.iso.org/standard/75839.html) renders to PNG page images plus a text layer; images are decoded and re-encoded to a single PNG page; plain text/Markdown is paginated and rasterized to PNG pages, source verbatim (Markdown is never rendered as markup). Any other type returns a typed not-renderable result. WebP output, Office formats (via a converter), a sanitized-PDF mode, and a direct-bytes (by-value) mode are later additions; today the only input path is by reference to the document source.
+- **PDF, common raster images (PNG/JPEG/GIF), plain text/Markdown, and — when `OFFICE_CONVERTER_URL` is configured — .docx/.xlsx/.pptx.** [PDF (ISO 32000)](https://www.iso.org/standard/75839.html) renders to PNG page images plus a text layer; images are decoded and re-encoded to a single PNG page; plain text/Markdown is paginated and rasterized to PNG pages, source verbatim (Markdown is never rendered as markup); Office documents convert to PDF via Gotenberg, then render through the same PDF path. Any other type — or an Office type with no converter configured — returns a typed not-renderable result. **LibreOffice's own format auto-detection is permissive**, not strict: a corrupted or mislabeled Office upload is more likely to convert into *something* (possibly low-fidelity) than to fail cleanly — still always inert, just not always a clean "unsupported" answer. WebP output, ODF formats, a sanitized-PDF mode, and a direct-bytes (by-value) mode are later additions; today the only input path is by reference to the document source.
 - **No cache.** Every request re-fetches the source bytes and re-renders. The manifest's `expiresAt` is a presentation hint only until an (ephemeral, encrypted) cache is added; there is no persistence layer.
 - **Single document source.** One `DOCUMENT_BASE_URL` is wired; multiple sources are not yet supported. With no source configured, the by-reference preview fails closed (`503`).
 - **Text extraction is best-effort.** The plain-text layer is whatever the engine can extract; a scanned/image-only PDF has no extractable text and the text endpoint returns `404` (no OCR).

@@ -255,6 +255,24 @@ func TestManifestUpstreamErrorRelayed(t *testing.T) {
 	qt.Assert(t, qt.IsTrue(strings.Contains(string(body), "err:document:forbidden"))) // terminal code relayed, not rewritten
 }
 
+// A render backend whose remote dependency is unreachable (the Office converter)
+// is a distinguishable 502, not the generic 500 renderFailed falls through to, and
+// not a false "unsupported_format".
+func TestManifestUpstreamUnavailable(t *testing.T) {
+	doer := &fakeDoer{meta: clients.Meta{ID: "doc-3", Mime: "application/pdf", Size: int64(len(pdfBytes))}, content: pdfBytes}
+	rnd := &fakeRenderer{inspectErr: render.ErrUpstreamUnavailable}
+
+	app := testApp(t, fakeDocs(doer), rnd)
+	app.Start(t)
+	defer app.Stop()
+
+	tc := app.TestClient()
+	resp, err := tc.Get("/api/v1/previews/doc-3", tc.WithHeader(hdrScopes, "preview:read"), tc.WithHeader("Authorization", bearer))
+	qt.Assert(t, qt.IsNil(err))
+	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusBadGateway))
+	fasthttp.ReleaseResponse(resp)
+}
+
 // A page renders to an inert image.
 func TestPageImage(t *testing.T) {
 	doer := &fakeDoer{meta: clients.Meta{ID: "doc-1", Mime: "application/pdf", Size: int64(len(pdfBytes))}, content: pdfBytes}

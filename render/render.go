@@ -9,6 +9,8 @@
 package render
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -28,6 +30,10 @@ var (
 	ErrTooManyPages = errors.New("too_many_pages")
 	// ErrPageOutOfRange means a requested page index does not exist.
 	ErrPageOutOfRange = errors.New("page_out_of_range")
+	// ErrUpstreamUnavailable means a render backend depends on a remote service
+	// (the Office document converter) that could not be reached — distinct from
+	// the input being unrenderable: this is "try again," not "download to review."
+	ErrUpstreamUnavailable = errors.New("upstream_unavailable")
 )
 
 // Config bounds every render. Zero values are rejected by the service config.
@@ -40,7 +46,21 @@ type Config struct {
 	MaxPages      int
 	InputMaxBytes int64
 	SupportedMime map[string]bool // allowlist, matched against the SNIFFED type
+
+	// OfficeConverterURL is the base URL of the Office-document converter
+	// (Gotenberg). Empty means Office preview is off: the office backend is not
+	// built and its MIME types are not added to SupportedMime — the same
+	// unsupported_format outcome as any other unconfigured type, not a failure.
+	OfficeConverterURL     string
+	OfficeConverterTimeout time.Duration
 }
+
+// OfficeEnabled reports whether an Office-document converter is configured.
+func (c Config) OfficeEnabled() bool { return c.OfficeConverterURL != "" }
+
+// OfficeMimeTypes are the MIME types the office backend handles, added to the
+// effective allowlist only when OfficeEnabled.
+func OfficeMimeTypes() []string { return []string{MimeDocx, MimeXlsx, MimePptx} }
 
 // Input is the document to render: the raw bytes and the source-declared media
 // type. The declared type is advisory only — the renderer sniffs the bytes and
@@ -98,15 +118,61 @@ func (c Config) CheckSize(n int64) error {
 	return nil
 }
 
+// OOXML media types (Word/Excel/PowerPoint). Go's sniffer has no signature for
+// these — they are ZIP containers, indistinguishable by magic bytes alone from a
+// plain .zip or an ASiC-E container — so Sniff disambiguates by the marker entry
+// each kind always has (below), never by the declared type or a filename.
+const (
+	MimeDocx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	MimeXlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	MimePptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+)
+
+// ooxmlMarkers maps each OOXML kind's telltale zip entry to the media type Sniff
+// reports for it. Checked by a directory listing only — no entry is decompressed
+// to make this decision, so it costs nothing like a real parse would.
+var ooxmlMarkers = map[string]string{
+	"word/document.xml":    MimeDocx,
+	"xl/workbook.xml":      MimeXlsx,
+	"ppt/presentation.xml": MimePptx,
+}
+
+// sniffZip disambiguates a ZIP container into a specific OOXML media type by
+// checking for the marker entry each kind always has. Returns "" when the zip
+// isn't one of them (a plain .zip, an ASiC-E container, or anything else), so the
+// caller keeps the generic application/zip sniff.
+func sniffZip(b []byte) string {
+	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		return ""
+	}
+	for _, f := range zr.File {
+		if mime, ok := ooxmlMarkers[f.Name]; ok {
+			return mime
+		}
+	}
+
+	return ""
+}
+
 // Sniff detects the actual content type of the bytes (the declared MIME is never
-// trusted). It returns a bare media type without parameters.
+// trusted). It returns a bare media type without parameters. A ZIP container gets
+// one further look — at its directory listing only, never its decompressed
+// content — to tell an OOXML document apart from any other zip.
 func Sniff(b []byte) string {
 	ct := http.DetectContentType(b)
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
 		ct = ct[:i]
 	}
+	ct = strings.ToLower(strings.TrimSpace(ct))
 
-	return strings.ToLower(strings.TrimSpace(ct))
+	if ct == "application/zip" {
+		if specific := sniffZip(b); specific != "" {
+			return specific
+		}
+	}
+
+	return ct
 }
 
 // Supported reports whether a sniffed media type is on the allowlist.

@@ -16,6 +16,8 @@ require (
 
 require golang.org/x/image v0.44.0
 
+require github.com/gmb-lib/go-sec-events v1.1.1
+
 require (
 	azugo.io/opentelemetry v0.35.1 // indirect
 	github.com/VictoriaMetrics/metrics v1.44.0 // indirect

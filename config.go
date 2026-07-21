@@ -64,6 +64,15 @@ type Configuration struct {
 	RenderPoolSize    int           `mapstructure:"render_pool_size" validate:"required,gt=0"`
 	InputMaxBytes     int64         `mapstructure:"input_max_bytes" validate:"required,gt=0"`
 	SupportedMime     string        `mapstructure:"supported_mime" validate:"required"`
+
+	// OfficeConverterURL is the base URL of the Office-document converter
+	// (Gotenberg). Empty means Office preview is off — the office backend is not
+	// built and .docx/.xlsx/.pptx get the same unsupported_format outcome as any
+	// other unconfigured type, never a failure. OfficeConverterTimeout bounds the
+	// whole conversion round trip (seconds, not milliseconds — a real office suite
+	// converting a document, not a WASM page render), so it is its own knob.
+	OfficeConverterURL     string        `mapstructure:"office_converter_url" validate:"omitempty,url"`
+	OfficeConverterTimeout time.Duration `mapstructure:"office_converter_timeout" validate:"required,gt=0"`
 }
 
 // NewConfiguration returns the configuration skeleton for binding.
@@ -123,6 +132,13 @@ func (c *Configuration) Bind(_ string, v *viper.Viper) {
 	_ = v.BindEnv("render_pool_size", "RENDER_POOL_SIZE")
 	_ = v.BindEnv("input_max_bytes", "INPUT_MAX_BYTES")
 	_ = v.BindEnv("supported_mime", "SUPPORTED_MIME")
+
+	// Office-document converter (Gotenberg). Empty URL = off; the timeout is its
+	// own knob because a real conversion (LibreOffice startup + layout + export)
+	// runs seconds, not the milliseconds a WASM page render takes.
+	v.SetDefault("office_converter_timeout", 30*time.Second)
+	_ = v.BindEnv("office_converter_url", "OFFICE_CONVERTER_URL")
+	_ = v.BindEnv("office_converter_timeout", "OFFICE_CONVERTER_TIMEOUT")
 }
 
 // Validate validates the full configuration tree.
@@ -149,17 +165,34 @@ func (c *Configuration) OutboundEnabled() bool {
 	return c.DocumentEnabled()
 }
 
-// RenderConfig projects the render caps onto the render package's config.
+// OfficeEnabled reports whether an Office-document converter is configured. Empty
+// means Office preview is off — no separate feature flag, the URL is the toggle.
+func (c *Configuration) OfficeEnabled() bool {
+	return strings.TrimSpace(c.OfficeConverterURL) != ""
+}
+
+// RenderConfig projects the render caps onto the render package's config. The
+// Office MIME types are folded into the effective allowlist only when a converter
+// is configured — SUPPORTED_MIME itself never needs editing to turn this on.
 func (c *Configuration) RenderConfig() render.Config {
+	mimes := supportedMimeSet(c.SupportedMime)
+	if c.OfficeEnabled() {
+		for _, m := range render.OfficeMimeTypes() {
+			mimes[m] = true
+		}
+	}
+
 	return render.Config{
-		PoolSize:      c.RenderPoolSize,
-		MaxDPI:        c.RenderMaxDPI,
-		MaxWidth:      c.RenderMaxWidth,
-		ImageFormat:   c.RenderImageFormat,
-		Timeout:       c.RenderTimeout,
-		MaxPages:      c.RenderMaxPages,
-		InputMaxBytes: c.InputMaxBytes,
-		SupportedMime: supportedMimeSet(c.SupportedMime),
+		PoolSize:               c.RenderPoolSize,
+		MaxDPI:                 c.RenderMaxDPI,
+		MaxWidth:               c.RenderMaxWidth,
+		ImageFormat:            c.RenderImageFormat,
+		Timeout:                c.RenderTimeout,
+		MaxPages:               c.RenderMaxPages,
+		InputMaxBytes:          c.InputMaxBytes,
+		SupportedMime:          mimes,
+		OfficeConverterURL:     c.OfficeConverterURL,
+		OfficeConverterTimeout: c.OfficeConverterTimeout,
 	}
 }
 
