@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	azugo.io/azugo v0.36.1
 	azugo.io/core v0.36.0
-	github.com/gmb-lib/go-authbyte v0.14.1
+	github.com/gmb-lib/go-authbyte v0.15.0
 	github.com/gmb-lib/go-platform-kit v1.7.0
 	github.com/go-quicktest/qt v1.102.0
 	github.com/spf13/cobra v1.10.2
@@ -13,6 +13,8 @@ require (
 	github.com/valyala/fasthttp v1.72.0
 	go.uber.org/zap v1.28.0
 )
+
+require golang.org/x/image v0.44.0
 
 require (
 	azugo.io/opentelemetry v0.35.1 // indirect
@@ -26,7 +28,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
+	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
@@ -39,7 +41,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
-	github.com/klauspost/compress v1.19.0 // indirect
+	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klippa-app/go-pdfium v1.19.4
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -82,8 +84,8 @@ require (
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260715232425-e75dac1f907d // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260720211330-0afa2a65878a // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720211330-0afa2a65878a // indirect
 	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )

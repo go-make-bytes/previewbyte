@@ -77,11 +77,12 @@ func (f *fakeRenderer) Text(context.Context, render.Input) ([]string, error) {
 func (f *fakeRenderer) Ready(context.Context) error { return nil }
 func (f *fakeRenderer) Close()                      {}
 
-// pdfBytes sniffs as application/pdf; gifBytes sniffs as image/gif (not on the
-// allowlist).
+// pdfBytes sniffs as application/pdf; unsupportedBytes sniffs as
+// application/octet-stream — binary, not text, and matches no allowlisted
+// signature (unlike GIF/PNG/JPEG/plain text, which this service now renders).
 var (
-	pdfBytes = []byte("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF")
-	gifBytes = []byte("GIF89a\x01\x00\x01\x00\x00\xff\xff\xff")
+	pdfBytes         = []byte("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF")
+	unsupportedBytes = []byte{0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd, 0x10, 0x11, 0x12}
 )
 
 func testApp(t testing.TB, docs *clients.Documents, rnd render.Renderer) *azugo.TestApp {
@@ -195,7 +196,7 @@ func TestManifestRenderable(t *testing.T) {
 
 // A non-previewable type yields a typed not-renderable result, not an error.
 func TestManifestUnsupported(t *testing.T) {
-	doer := &fakeDoer{meta: clients.Meta{ID: "doc-2", Mime: "image/gif", Size: int64(len(gifBytes))}, content: gifBytes}
+	doer := &fakeDoer{meta: clients.Meta{ID: "doc-2", Mime: "application/octet-stream", Size: int64(len(unsupportedBytes))}, content: unsupportedBytes}
 
 	app := testApp(t, fakeDocs(doer), &fakeRenderer{})
 	app.Start(t)

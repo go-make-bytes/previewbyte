@@ -116,9 +116,12 @@ func (a *App) init() error {
 		a.Log().Warn("no document base URL set (DOCUMENT_BASE_URL) — the by-reference preview will report not-ready until it is configured")
 	}
 
-	// The renderer: a pool of WebAssembly PDFium instances. A render of untrusted
-	// bytes runs entirely inside the sandboxed runtime; a parser fault fails one job.
-	a.renderer, err = render.NewPDFium(cfg.RenderConfig())
+	// The renderer: PDFium (a pool of WebAssembly instances) for PDF, plus the
+	// stdlib-backed image and text backends, dispatched by sniffed MIME. Only the
+	// PDF path opens a document inside the WASM sandbox; a parser fault there fails
+	// one job. The image/text backends carry no untrusted-parser risk beyond what
+	// the platform already trusts (stdlib image decoders; our own vendored font).
+	a.renderer, err = render.NewDispatch(cfg.RenderConfig())
 	if err != nil {
 		return fmt.Errorf("previewbyte: renderer: %w", err)
 	}

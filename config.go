@@ -101,8 +101,10 @@ func (c *Configuration) Bind(_ string, v *viper.Viper) {
 	// Render caps. Conservative defaults: a single rendered page is at most
 	// max-width wide at the chosen DPI, the whole render is killed after the
 	// timeout, only the first N pages are rendered, and inputs above the cap are
-	// rejected before any parse. The MIME allowlist is the first slice's set
-	// (PDF only); the declared type is sniffed, never trusted.
+	// rejected before any parse. The MIME allowlist covers PDF, common raster
+	// images, and plain text/Markdown (Markdown has no sniff signature of its own,
+	// so a .md upload sniffs identically to a .txt one); the declared type is
+	// sniffed, never trusted.
 	v.SetDefault("render_mode", "raster")
 	v.SetDefault("render_max_dpi", 150)
 	v.SetDefault("render_max_width", 2048)
@@ -111,7 +113,7 @@ func (c *Configuration) Bind(_ string, v *viper.Viper) {
 	v.SetDefault("render_max_pages", 100)
 	v.SetDefault("render_pool_size", 2)
 	v.SetDefault("input_max_bytes", int64(64*1024*1024))
-	v.SetDefault("supported_mime", "application/pdf")
+	v.SetDefault("supported_mime", "application/pdf,image/png,image/jpeg,image/gif,text/plain")
 	_ = v.BindEnv("render_mode", "RENDER_MODE")
 	_ = v.BindEnv("render_max_dpi", "RENDER_MAX_DPI")
 	_ = v.BindEnv("render_max_width", "RENDER_MAX_WIDTH")
