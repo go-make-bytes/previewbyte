@@ -53,7 +53,11 @@ func (c *Documents) Metadata(ctx context.Context, id string, obo OnBehalf) (*Met
 // cached unencrypted. Owner-filtering holds end-to-end: a document the user does
 // not own returns not-found.
 func (c *Documents) Content(ctx context.Context, id string, obo OnBehalf) ([]byte, error) {
-	url := fmt.Sprintf("%s/api/v1/documents/%s/content", c.baseURL, id)
+	// conduit=render declares the platform purpose: the preview service fetches
+	// bytes to rasterize inert page images for in-app viewing — viewing stays
+	// available while the chain's signed result is download-frozen mid-workflow
+	// (an undeclared consumer fails closed under the freeze).
+	url := fmt.Sprintf("%s/api/v1/documents/%s/content?conduit=render", c.baseURL, id)
 
 	return doBytesOnBehalf(ctx, c.doer, "document", c.audience, scopeDocRead, http.MethodGet, url, obo)
 }

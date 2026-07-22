@@ -37,8 +37,8 @@ github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHk
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx59Ho=
 github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
-github.com/gabriel-vasile/mimetype v1.4.13 h1:46nXokslUBsAJE/wMsp5gtO500a4F3Nkz9Ufpk2AcUM=
-github.com/gabriel-vasile/mimetype v1.4.13/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
+github.com/gabriel-vasile/mimetype v1.4.14 h1:8eyElddS5wbWNDG4sIupw+IX2jEjHX2aqAAq/9C3M8s=
+github.com/gabriel-vasile/mimetype v1.4.14/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
 github.com/gmb-lib/go-authbyte v0.15.0 h1:8HtLIEveSe0UnzJolKBi8auj+F3Jta0gxG3ufGE4xEY=
 github.com/gmb-lib/go-authbyte v0.15.0/go.mod h1:vKKqhZUUR1yd/lNlp+ajToU5EToSYbPJkwcsyVgXLQI=
 github.com/gmb-lib/go-platform-kit v1.7.0 h1:3AMigeiSwiuEtFzNvDchITyqFCvSfZXhredZhbS7WsU=

@@ -32,7 +32,9 @@ func (f *fakeDoer) DoServiceOnBehalf(_ context.Context, _, _, _, subjectToken, _
 		// The real client fails closed before reaching here; guard anyway.
 		return &authclient.BackgroundResponse{StatusCode: http.StatusUnauthorized}, nil
 	}
-	if strings.HasSuffix(fullURL, "/content") {
+	// The content read declares its render-conduit purpose in the query, so
+	// match the path with or without it.
+	if strings.HasSuffix(fullURL, "/content") || strings.Contains(fullURL, "/content?") {
 		return &authclient.BackgroundResponse{StatusCode: orDefault(f.contentStatus), Body: f.content}, nil
 	}
 	body := f.metaBody
