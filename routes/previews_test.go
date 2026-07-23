@@ -37,6 +37,11 @@ func (f *fakeDoer) DoServiceOnBehalf(_ context.Context, _, _, _, subjectToken, _
 	if strings.HasSuffix(fullURL, "/content") || strings.Contains(fullURL, "/content?") {
 		return &authclient.BackgroundResponse{StatusCode: orDefault(f.contentStatus), Body: f.content}, nil
 	}
+	// The inner-file extraction (GET .../data-objects/{name}) returns one inner
+	// file's bytes — answered from the same canned content, keyed on its path.
+	if strings.Contains(fullURL, "/data-objects/") {
+		return &authclient.BackgroundResponse{StatusCode: orDefault(f.contentStatus), Body: f.content}, nil
+	}
 	body := f.metaBody
 	if body == nil {
 		body, _ = json.Marshal(f.meta)
@@ -290,4 +295,110 @@ func TestPageImage(t *testing.T) {
 	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusOK))
 	qt.Assert(t, qt.IsTrue(strings.HasPrefix(string(resp.Header.ContentType()), "image/png")))
 	fasthttp.ReleaseResponse(resp)
+}
+
+// An inner file of a container renders: the manifest carries the page list, and its
+// refs point back at the container's data-objects path (an inner file has no id).
+func TestInnerManifestRenderable(t *testing.T) {
+	doer := &fakeDoer{content: pdfBytes}
+	rnd := &fakeRenderer{doc: &render.Document{Format: "pdf", PageCount: 2, Pages: []render.PageDim{{Width: 800, Height: 1000}, {Width: 800, Height: 1000}}}}
+
+	app := testApp(t, fakeDocs(doer), rnd)
+	app.Start(t)
+	defer app.Stop()
+
+	tc := app.TestClient()
+	resp, err := tc.Get("/api/v1/previews/cont-1/data-objects/report.pdf", tc.WithHeader(hdrScopes, "preview:read"), tc.WithHeader("Authorization", bearer))
+	qt.Assert(t, qt.IsNil(err))
+	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusOK))
+
+	body, err := resp.BodyUncompressed()
+	fasthttp.ReleaseResponse(resp)
+	qt.Assert(t, qt.IsNil(err))
+
+	var m Manifest
+	qt.Assert(t, qt.IsNil(json.Unmarshal(body, &m)))
+	qt.Assert(t, qt.IsTrue(m.Renderable))
+	qt.Assert(t, qt.Equals(m.PageCount, 2))
+	qt.Assert(t, qt.Equals(m.Pages[0].ImageRef, "/api/v1/previews/cont-1/data-objects/report.pdf/pages/0"))
+	qt.Assert(t, qt.Equals(m.TextLayerRef, "/api/v1/previews/cont-1/data-objects/report.pdf/text"))
+}
+
+// A non-previewable inner file yields a typed not-renderable result, not an error.
+func TestInnerManifestUnsupported(t *testing.T) {
+	doer := &fakeDoer{content: unsupportedBytes}
+
+	app := testApp(t, fakeDocs(doer), &fakeRenderer{})
+	app.Start(t)
+	defer app.Stop()
+
+	tc := app.TestClient()
+	resp, err := tc.Get("/api/v1/previews/cont-1/data-objects/blob.bin", tc.WithHeader(hdrScopes, "preview:read"), tc.WithHeader("Authorization", bearer))
+	qt.Assert(t, qt.IsNil(err))
+	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusOK))
+
+	body, err := resp.BodyUncompressed()
+	fasthttp.ReleaseResponse(resp)
+	qt.Assert(t, qt.IsNil(err))
+
+	var nr NotRenderable
+	qt.Assert(t, qt.IsNil(json.Unmarshal(body, &nr)))
+	qt.Assert(t, qt.IsFalse(nr.Renderable))
+	qt.Assert(t, qt.Equals(nr.Reason, "unsupported_format"))
+}
+
+// Owner isolation holds for inner files: a container the user does not own is
+// not-found at the source and surfaces as 404 — never another user's content.
+func TestInnerManifestNotOwned(t *testing.T) {
+	doer := &fakeDoer{contentStatus: http.StatusNotFound}
+
+	app := testApp(t, fakeDocs(doer), &fakeRenderer{})
+	app.Start(t)
+	defer app.Stop()
+
+	tc := app.TestClient()
+	resp, err := tc.Get("/api/v1/previews/not-mine/data-objects/report.pdf", tc.WithHeader(hdrScopes, "preview:read"), tc.WithHeader("Authorization", bearer))
+	qt.Assert(t, qt.IsNil(err))
+	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusNotFound))
+	fasthttp.ReleaseResponse(resp)
+}
+
+// An inner-file page renders to an inert image.
+func TestInnerPageImage(t *testing.T) {
+	doer := &fakeDoer{content: pdfBytes}
+	rnd := &fakeRenderer{img: &render.Image{Bytes: []byte("\x89PNG\r\n\x1a\n"), ContentType: "image/png", Width: 800, Height: 1000}}
+
+	app := testApp(t, fakeDocs(doer), rnd)
+	app.Start(t)
+	defer app.Stop()
+
+	tc := app.TestClient()
+	resp, err := tc.Get("/api/v1/previews/cont-1/data-objects/report.pdf/pages/0", tc.WithHeader(hdrScopes, "preview:read"), tc.WithHeader("Authorization", bearer))
+	qt.Assert(t, qt.IsNil(err))
+	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusOK))
+	qt.Assert(t, qt.IsTrue(strings.HasPrefix(string(resp.Header.ContentType()), "image/png")))
+	fasthttp.ReleaseResponse(resp)
+}
+
+// An inner-file text layer is returned per page.
+func TestInnerText(t *testing.T) {
+	doer := &fakeDoer{content: pdfBytes}
+	rnd := &fakeRenderer{text: []string{"page one text", "page two text"}}
+
+	app := testApp(t, fakeDocs(doer), rnd)
+	app.Start(t)
+	defer app.Stop()
+
+	tc := app.TestClient()
+	resp, err := tc.Get("/api/v1/previews/cont-1/data-objects/report.pdf/text", tc.WithHeader(hdrScopes, "preview:read"), tc.WithHeader("Authorization", bearer))
+	qt.Assert(t, qt.IsNil(err))
+	qt.Assert(t, qt.Equals(resp.StatusCode(), fasthttp.StatusOK))
+
+	body, err := resp.BodyUncompressed()
+	fasthttp.ReleaseResponse(resp)
+	qt.Assert(t, qt.IsNil(err))
+
+	var tl TextLayer
+	qt.Assert(t, qt.IsNil(json.Unmarshal(body, &tl)))
+	qt.Assert(t, qt.Equals(len(tl.Pages), 2))
 }

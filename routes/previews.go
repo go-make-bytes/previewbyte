@@ -3,6 +3,7 @@ package routes
 import (
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -27,6 +28,16 @@ const previewHint = 5 * time.Minute
 func pageRef(id string, i int) string { return fmt.Sprintf("%s%s/pages/%d", previewBasePath, id, i) }
 func textRef(id string) string        { return previewBasePath + id + "/text" }
 
+// innerPageRef / innerTextRef are the manifest references for one inner file of an
+// ASiC-E container: they carry the container id and the inner file name, mirroring
+// the document source's `/data-objects/{name}` extraction path.
+func innerPageRef(id, name string, i int) string {
+	return fmt.Sprintf("%s%s/data-objects/%s/pages/%d", previewBasePath, id, neturl.PathEscape(name), i)
+}
+func innerTextRef(id, name string) string {
+	return fmt.Sprintf("%s%s/data-objects/%s/text", previewBasePath, id, neturl.PathEscape(name))
+}
+
 // previewManifest renders (or inspects) a document and returns its page manifest.
 // A document that cannot be previewed yields a typed not-renderable result, not an
 // error, so the caller can offer "download to review".
@@ -46,19 +57,10 @@ func textRef(id string) string        { return previewBasePath + id + "/text" }
 func (r *router) previewManifest(ctx *azugo.Context) {
 	id := ctx.Params.String("documentId")
 
-	docs := r.Documents()
-	if docs == nil {
-		r.sourceUnavailable(ctx)
-
-		return
-	}
-	obo, ok := r.onBehalf(ctx)
+	docs, obo, ok := r.source(ctx)
 	if !ok {
-		ctx.Error(corehttp.UnauthorizedError{})
-
 		return
 	}
-	cfg := r.Config().RenderConfig()
 
 	// Cheap pre-check: reject by declared size before transferring any bytes.
 	meta, err := docs.Metadata(ctx, id, obo)
@@ -67,7 +69,7 @@ func (r *router) previewManifest(ctx *azugo.Context) {
 
 		return
 	}
-	if cfg.CheckSize(meta.Size) != nil {
+	if r.Config().RenderConfig().CheckSize(meta.Size) != nil {
 		ctx.JSON(NotRenderable{DocumentID: id, Reason: "too_large", Mime: meta.Mime})
 
 		return
@@ -79,12 +81,62 @@ func (r *router) previewManifest(ctx *azugo.Context) {
 
 		return
 	}
+
+	r.writeManifest(ctx, id, content, func(i int) string { return pageRef(id, i) }, textRef(id))
+}
+
+// previewInnerManifest renders one inner file of an ASiC-E container and returns its
+// page manifest. A multi-file bundle absorbs its originals into the container, so an
+// inner file has no document id of its own — it is addressed by (container id, inner
+// name); the bytes are extracted on the user's behalf, then inspected exactly like a
+// whole document.
+//
+// @operationId PreviewInnerManifest
+// @title Inner-file preview manifest
+// @description Extracts one inner file of an ASiC-E container on behalf of the user and returns its page manifest, or a typed not-renderable result.
+// @param documentId path string true "Container document id"
+// @param name path string true "Inner file name"
+// @success 200 Manifest Manifest "The preview manifest, or a not-renderable result"
+// @failure 401 {empty} "Unauthorized"
+// @failure 403 {empty} "Forbidden"
+// @failure 404 {empty} "Not found"
+// @failure 502 string string "Source unavailable"
+// @failure 503 {empty} "Document source not configured"
+// @resource Preview
+// @route /api/v1/previews/{documentId}/data-objects/{name} [get].
+func (r *router) previewInnerManifest(ctx *azugo.Context) {
+	id := ctx.Params.String("documentId")
+	name := ctx.Params.String("name")
+
+	docs, obo, ok := r.source(ctx)
+	if !ok {
+		return
+	}
+
+	// No metadata pre-check: an inner file has no metadata endpoint; the extraction
+	// returns just its bytes, which the size cap in writeManifest still guards.
+	content, err := docs.ExtractObject(ctx, id, name, obo)
+	if err != nil {
+		r.mapSourceError(ctx, err)
+
+		return
+	}
+
+	r.writeManifest(ctx, id, content,
+		func(i int) string { return innerPageRef(id, name, i) }, innerTextRef(id, name))
+}
+
+// writeManifest inspects already-fetched content and writes the preview manifest, or
+// a typed not-renderable result (too_large / unsupported_format / a renderer
+// renderability reason) — never an error the UI must guess at. The ref builders let
+// a whole-document and an inner-file manifest share this tail.
+func (r *router) writeManifest(ctx *azugo.Context, id string, content []byte, pageRefFn func(int) string, textRefStr string) {
+	cfg := r.Config().RenderConfig()
 	if cfg.CheckSize(int64(len(content))) != nil {
 		ctx.JSON(NotRenderable{DocumentID: id, Reason: "too_large", Mime: render.Sniff(content)})
 
 		return
 	}
-
 	sniff := render.Sniff(content)
 	if !cfg.Supported(sniff) {
 		ctx.JSON(NotRenderable{DocumentID: id, Reason: "unsupported_format", Mime: sniff})
@@ -111,7 +163,7 @@ func (r *router) previewManifest(ctx *azugo.Context) {
 
 	pages := make([]PageRef, len(doc.Pages))
 	for i, p := range doc.Pages {
-		pages[i] = PageRef{Index: i, Width: p.Width, Height: p.Height, ImageRef: pageRef(id, i)}
+		pages[i] = PageRef{Index: i, Width: p.Width, Height: p.Height, ImageRef: pageRefFn(i)}
 	}
 	ctx.JSON(Manifest{
 		PreviewID:    id,
@@ -119,7 +171,7 @@ func (r *router) previewManifest(ctx *azugo.Context) {
 		Format:       doc.Format,
 		PageCount:    doc.PageCount,
 		Pages:        pages,
-		TextLayerRef: textRef(id),
+		TextLayerRef: textRefStr,
 		Renderable:   true,
 		ExpiresAt:    time.Now().Add(previewHint).UTC().Format(time.RFC3339),
 	})
@@ -154,6 +206,46 @@ func (r *router) previewPage(ctx *azugo.Context) {
 		return
 	}
 
+	r.writePage(ctx, content, sniff, n)
+}
+
+// previewInnerPage renders one page of one inner file of an ASiC-E container.
+//
+// @operationId PreviewInnerPage
+// @title Rendered inner-file page image
+// @description Renders one page of one inner file of an ASiC-E container on behalf of the user to an inert image.
+// @param documentId path string true "Container document id"
+// @param name path string true "Inner file name"
+// @param n path int true "Zero-based page index"
+// @success 200 {empty} "The inert page image"
+// @failure 401 {empty} "Unauthorized"
+// @failure 403 {empty} "Forbidden"
+// @failure 404 {empty} "Not found"
+// @failure 415 string string "Unsupported document"
+// @failure 502 string string "Source unavailable"
+// @resource Preview
+// @route /api/v1/previews/{documentId}/data-objects/{name}/pages/{n} [get].
+func (r *router) previewInnerPage(ctx *azugo.Context) {
+	id := ctx.Params.String("documentId")
+	name := ctx.Params.String("name")
+	n, err := ctx.Params.Int("n")
+	if err != nil {
+		ctx.Error(err)
+
+		return
+	}
+
+	content, sniff, ok := r.fetchRenderableInner(ctx, id, name)
+	if !ok {
+		return
+	}
+
+	r.writePage(ctx, content, sniff, n)
+}
+
+// writePage renders one page of already-fetched content to an inert image, mapping
+// the render outcomes onto the page endpoint's responses.
+func (r *router) writePage(ctx *azugo.Context, content []byte, sniff string, n int) {
 	img, err := r.Renderer().RenderPage(ctx, render.Input{Bytes: content, Mime: sniff}, n)
 	if err != nil {
 		if errors.Is(err, render.ErrPageOutOfRange) {
@@ -204,6 +296,39 @@ func (r *router) previewText(ctx *azugo.Context) {
 		return
 	}
 
+	r.writeText(ctx, id, content, sniff)
+}
+
+// previewInnerText returns the plain-text layer of one inner file of a container.
+//
+// @operationId PreviewInnerText
+// @title Inner-file text layer
+// @description Extracts the plain-text layer of one inner file of an ASiC-E container on behalf of the user.
+// @param documentId path string true "Container document id"
+// @param name path string true "Inner file name"
+// @success 200 TextLayer TextLayer "The per-page text layer"
+// @failure 401 {empty} "Unauthorized"
+// @failure 403 {empty} "Forbidden"
+// @failure 404 {empty} "No text layer"
+// @failure 415 string string "Unsupported document"
+// @failure 502 string string "Source unavailable"
+// @resource Preview
+// @route /api/v1/previews/{documentId}/data-objects/{name}/text [get].
+func (r *router) previewInnerText(ctx *azugo.Context) {
+	id := ctx.Params.String("documentId")
+	name := ctx.Params.String("name")
+
+	content, sniff, ok := r.fetchRenderableInner(ctx, id, name)
+	if !ok {
+		return
+	}
+
+	r.writeText(ctx, id, content, sniff)
+}
+
+// writeText extracts the plain-text layer of already-fetched content, one entry per
+// page; content with no extractable text yields 404 (no text layer).
+func (r *router) writeText(ctx *azugo.Context, id string, content []byte, sniff string) {
 	texts, err := r.Renderer().Text(ctx, render.Input{Bytes: content, Mime: sniff})
 	if err != nil {
 		if errors.Is(err, render.ErrUpstreamUnavailable) {
@@ -229,8 +354,11 @@ func (r *router) previewText(ctx *azugo.Context) {
 			break
 		}
 	}
+	// No extractable text (e.g. an image) is a normal, EMPTY layer — a 200 with no
+	// pages, not a 404. The caller fetches the text layer best-effort; a 404 here only
+	// produces misleading "failed request" noise in the browser console.
 	if !hasText {
-		ctx.Error(corehttp.NotFoundError{Resource: "text layer"})
+		ctx.JSON(TextLayer{DocumentID: id, Pages: []string{}})
 
 		return
 	}
@@ -238,24 +366,34 @@ func (r *router) previewText(ctx *azugo.Context) {
 	ctx.JSON(TextLayer{DocumentID: id, Pages: texts})
 }
 
-// fetchRenderable resolves the shared prelude of the page/text endpoints: the
-// document source must be configured, the caller authorized on behalf of the user,
-// the bytes within the size cap, and the sniffed type on the allowlist. It writes
-// the appropriate response and returns ok=false when any check fails.
-func (r *router) fetchRenderable(ctx *azugo.Context, id string) ([]byte, string, bool) {
+// source resolves the document client and the on-behalf identity, writing the
+// failure response and returning ok=false when the source is unconfigured or the
+// caller presented no subject token (the on-behalf read fails closed).
+func (r *router) source(ctx *azugo.Context) (*clients.Documents, clients.OnBehalf, bool) {
 	docs := r.Documents()
 	if docs == nil {
 		r.sourceUnavailable(ctx)
 
-		return nil, "", false
+		return nil, clients.OnBehalf{}, false
 	}
 	obo, ok := r.onBehalf(ctx)
 	if !ok {
 		ctx.Error(corehttp.UnauthorizedError{})
 
+		return nil, clients.OnBehalf{}, false
+	}
+
+	return docs, obo, true
+}
+
+// fetchRenderable resolves the page/text prelude for a whole document: the bytes are
+// fetched on behalf of the user, then checked against the size cap and the format
+// allowlist. It writes the failure response and returns ok=false on any miss.
+func (r *router) fetchRenderable(ctx *azugo.Context, id string) ([]byte, string, bool) {
+	docs, obo, ok := r.source(ctx)
+	if !ok {
 		return nil, "", false
 	}
-	cfg := r.Config().RenderConfig()
 
 	content, err := docs.Content(ctx, id, obo)
 	if err != nil {
@@ -263,6 +401,34 @@ func (r *router) fetchRenderable(ctx *azugo.Context, id string) ([]byte, string,
 
 		return nil, "", false
 	}
+
+	return r.checkRenderable(ctx, content)
+}
+
+// fetchRenderableInner is fetchRenderable for one inner file of a container: the
+// bytes come from the container's `/data-objects/{name}` extraction rather than a
+// whole-document content read.
+func (r *router) fetchRenderableInner(ctx *azugo.Context, containerID, name string) ([]byte, string, bool) {
+	docs, obo, ok := r.source(ctx)
+	if !ok {
+		return nil, "", false
+	}
+
+	content, err := docs.ExtractObject(ctx, containerID, name, obo)
+	if err != nil {
+		r.mapSourceError(ctx, err)
+
+		return nil, "", false
+	}
+
+	return r.checkRenderable(ctx, content)
+}
+
+// checkRenderable applies the size cap and format allowlist to fetched bytes for the
+// page/text endpoints, where a miss is a 415 — the manifest (the discovery endpoint)
+// reports the same misses instead as a typed 200 not-renderable result.
+func (r *router) checkRenderable(ctx *azugo.Context, content []byte) ([]byte, string, bool) {
+	cfg := r.Config().RenderConfig()
 	if cfg.CheckSize(int64(len(content))) != nil {
 		r.unsupported(ctx, "too_large")
 

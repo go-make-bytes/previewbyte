@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"strings"
 )
 
@@ -60,4 +61,18 @@ func (c *Documents) Content(ctx context.Context, id string, obo OnBehalf) ([]byt
 	url := fmt.Sprintf("%s/api/v1/documents/%s/content?conduit=render", c.baseURL, id)
 
 	return doBytesOnBehalf(ctx, c.doer, "document", c.audience, scopeDocRead, http.MethodGet, url, obo)
+}
+
+// ExtractObject fetches one named inner data object out of an ASiC-E container on
+// behalf of the user. A multi-file bundle absorbs its originals into the container,
+// so the container is their only home; the preview service renders an inner file by
+// extracting it here first (an inner file has no document id of its own). Like
+// Content it declares conduit=render, so inner-file viewing stays available while the
+// chain's signed result is download-frozen mid-workflow. Owner-filtering holds
+// end-to-end: a container the user does not own returns not-found.
+func (c *Documents) ExtractObject(ctx context.Context, containerID, name string, obo OnBehalf) ([]byte, error) {
+	reqURL := fmt.Sprintf("%s/api/v1/documents/%s/data-objects/%s?conduit=render",
+		c.baseURL, containerID, neturl.PathEscape(name))
+
+	return doBytesOnBehalf(ctx, c.doer, "document", c.audience, scopeDocRead, http.MethodGet, reqURL, obo)
 }

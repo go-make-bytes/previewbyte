@@ -45,6 +45,9 @@ The `/api/v1` surface is DPoP-authenticated and requires the `preview:read` scop
 | `GET /api/v1/previews/{documentId}` | Preview manifest — page list, per-page pixel dimensions, and the inert references to fetch | Returns a typed `{renderable:false, reason, mime}` result (200) for a non-previewable type, so the caller can offer "download to review" — never an error to guess at |
 | `GET /api/v1/previews/{documentId}/pages/{n}` | One rendered, inert page image | Zero-based page index; `image/png` with `Cache-Control: no-store`; `404` for a page past the end, `415` for an unsupported document |
 | `GET /api/v1/previews/{documentId}/text` | The optional plain-text layer (one entry per page) | `404` when the document has no extractable text |
+| `GET /api/v1/previews/{documentId}/data-objects/{name}` | Preview manifest for one inner file of an ASiC-E container | A multi-file bundle absorbs its originals, so an inner file has no id of its own — it is addressed by (container id, inner name); the bytes are extracted from the container, then rendered exactly like a whole document (same typed `{renderable:false, …}` result for a non-previewable inner file) |
+| `GET /api/v1/previews/{documentId}/data-objects/{name}/pages/{n}` | One rendered, inert page image of an inner file | Same semantics as the whole-document page endpoint |
+| `GET /api/v1/previews/{documentId}/data-objects/{name}/text` | The plain-text layer of an inner file | `404` when the inner file has no extractable text |
 | `GET /healthz` | Liveness | `200` whenever the process is up; skips the access log |
 | `GET /readyz` | Readiness | `503` when the render-engine pool cannot hand out a live instance, else `200` |
 

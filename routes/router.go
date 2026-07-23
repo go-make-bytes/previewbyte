@@ -41,6 +41,13 @@ func Init(a *previewbyte.App) error {
 	v1.Get("/previews/{documentId}/pages/{n}", r.previewPage)
 	v1.Get("/previews/{documentId}/text", r.previewText)
 
+	// Inner-file preview: a multi-file bundle absorbs its originals, so an inner
+	// file is previewed by (container id, inner name) — the bytes are extracted
+	// from the container, then rendered exactly like a whole document.
+	v1.Get("/previews/{documentId}/data-objects/{name}", r.previewInnerManifest)
+	v1.Get("/previews/{documentId}/data-objects/{name}/pages/{n}", r.previewInnerPage)
+	v1.Get("/previews/{documentId}/data-objects/{name}/text", r.previewInnerText)
+
 	return nil
 }
 
