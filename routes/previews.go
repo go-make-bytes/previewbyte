@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	pkerrors "github.com/gmb-lib/go-platform-kit/errors"
+	pkweb "github.com/gmb-lib/go-platform-kit/web"
 
 	"github.com/go-make-bytes/previewbyte/clients"
 	"github.com/go-make-bytes/previewbyte/render"
@@ -106,7 +107,7 @@ func (r *router) previewManifest(ctx *azugo.Context) {
 // @route /api/v1/previews/{documentId}/data-objects/{name} [get].
 func (r *router) previewInnerManifest(ctx *azugo.Context) {
 	id := ctx.Params.String("documentId")
-	name := ctx.Params.String("name")
+	name := pkweb.PathParam(ctx, "name")
 
 	docs, obo, ok := r.source(ctx)
 	if !ok {
@@ -227,7 +228,7 @@ func (r *router) previewPage(ctx *azugo.Context) {
 // @route /api/v1/previews/{documentId}/data-objects/{name}/pages/{n} [get].
 func (r *router) previewInnerPage(ctx *azugo.Context) {
 	id := ctx.Params.String("documentId")
-	name := ctx.Params.String("name")
+	name := pkweb.PathParam(ctx, "name")
 	n, err := ctx.Params.Int("n")
 	if err != nil {
 		ctx.Error(err)
@@ -316,7 +317,7 @@ func (r *router) previewText(ctx *azugo.Context) {
 // @route /api/v1/previews/{documentId}/data-objects/{name}/text [get].
 func (r *router) previewInnerText(ctx *azugo.Context) {
 	id := ctx.Params.String("documentId")
-	name := ctx.Params.String("name")
+	name := pkweb.PathParam(ctx, "name")
 
 	content, sniff, ok := r.fetchRenderableInner(ctx, id, name)
 	if !ok {
