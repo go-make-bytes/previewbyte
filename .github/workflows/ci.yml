@@ -45,9 +45,9 @@ jobs:
       - name: Test (race + coverage)
         run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
 
-  # Short fuzz sweep — every Fuzz* target (render/fuzz_test.go: the P0 malicious-
-  # PDF/bomb abuse corpus for the untrusted-input backends) runs 30s so this, the
-  # one service that opens untrusted document bytes, never regresses to a panic.
+  # Short fuzz sweep — every Fuzz* target (render/fuzz_test.go: the malicious-PDF /
+  # bomb abuse corpus for the untrusted-input backends) runs 30s so this, the one
+  # service that opens untrusted document bytes, never regresses to a panic.
   # Loops per package, never a bare `./...` — `go test -fuzz` rejects a package
   # pattern that expands to more than one package, which this (multi-package)
   # service always does ("cannot use -fuzz flag with multiple packages").
