@@ -166,7 +166,7 @@ func (r *pdfiumRenderer) RenderPage(_ context.Context, in Input, page int) (*Ima
 		}
 		defer rendered.Cleanup()
 
-		img := rendered.Result.Image
+		img := rendered.Result.RenderedImage
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, img); err != nil {
 			return fmt.Errorf("encode page image: %w", err)
