@@ -52,17 +52,14 @@ func Init(a *previewbyte.App) error {
 }
 
 // requireScope rejects callers without the given scope group at the given level.
-// The development-only user-token concession relaxes the check (it accepts the demo
-// app's public-client token, which carries no service scopes); it is never on in
-// production. A denial is also a NIS2-audit security event — previewbyte's own
-// inbound boundary is the one thing only it can see with full fidelity.
+// A denial is also a NIS2-audit security event — previewbyte's own inbound
+// boundary is the one thing only it can see with full fidelity.
 func (r *router) requireScope(group, level string) azugo.RequestHandlerFunc {
-	relaxed := r.DevAcceptUserToken()
 	requiredScope := group + ":" + level
 
 	return func(next azugo.RequestHandler) azugo.RequestHandler {
 		return func(ctx *azugo.Context) {
-			if !relaxed && !ctx.User().HasScopeLevel(group, level) {
+			if !ctx.User().HasScopeLevel(group, level) {
 				r.denied(ctx, requiredScope)
 				ctx.Error(corehttp.ForbiddenError{})
 

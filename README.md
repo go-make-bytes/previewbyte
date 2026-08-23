@@ -174,8 +174,6 @@ Standard fleet env (`SERVER_URLS`, `SERVICE_NAME`, `ENVIRONMENT`, `LOG_*`, `METR
 | `SUPPORTED_MIME` | `application/pdf,image/png,image/jpeg,image/gif,text/plain` | Content-type allowlist, comma-separated; matched against the **sniffed** type, never the declared one. A `.md` upload sniffs as `text/plain` (there is no distinct signature for Markdown) and is rendered as plain text, never as rendered Markdown. Office MIME types are added automatically when `OFFICE_CONVERTER_URL` is set (below) — this list never needs editing to turn that on |
 | `OFFICE_CONVERTER_URL` | *(empty)* | Base URL of an Office-document converter (Gotenberg). **Empty = Office preview is off** — `.docx`/`.xlsx`/`.pptx` get the same `renderable:false` as any other unsupported type, not a failure; no separate feature flag |
 | `OFFICE_CONVERTER_TIMEOUT` | `30s` | The whole conversion round trip (LibreOffice startup + layout + export is seconds, not the milliseconds a WASM page render takes — a separate knob from `RENDER_TIMEOUT`) |
-| `DEV_ACCEPT_USER_TOKEN` | `false` | **Development only** — accept the demo SPA's public-client user token and relax per-endpoint scope checks. Never enable in production |
-| `DEV_USER_TOKEN_AUDIENCE` | `portal-api` | Audience accepted when the dev concession above is on |
 
 ---
 

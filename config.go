@@ -31,13 +31,6 @@ type Configuration struct {
 	// token for this service's audience and reading on behalf of the user.
 	Auth *authclient.Configuration `mapstructure:"auth"`
 
-	// DevAcceptUserToken is a development-only concession (mirrors the document and
-	// signing services): when true the inbound auth validates the demo single-page
-	// app's public-client DPoP user token (aud = DevUserAudience) and relaxes the
-	// per-endpoint scope checks. MUST be false in production.
-	DevAcceptUserToken bool   `mapstructure:"dev_accept_user_token"`
-	DevUserAudience    string `mapstructure:"dev_user_token_audience"`
-
 	// DocumentBaseURL is the document source this service reads bytes from;
 	// DocumentAudience is the target audience for the delegated token. Empty
 	// DocumentBaseURL means the by-reference preview is unavailable and fails closed.
@@ -91,9 +84,6 @@ func (c *Configuration) Bind(_ string, v *viper.Viper) {
 	c.Auth = azugocfg.Bind(c.Auth, "auth", v)
 
 	// Dev-only user-token concession (off by default).
-	v.SetDefault("dev_user_token_audience", "portal-api")
-	_ = v.BindEnv("dev_accept_user_token", "DEV_ACCEPT_USER_TOKEN")
-	_ = v.BindEnv("dev_user_token_audience", "DEV_USER_TOKEN_AUDIENCE")
 
 	// Document source (bytes read on behalf of the user).
 	v.SetDefault("document_audience", "svc:document")

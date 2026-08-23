@@ -21,7 +21,6 @@ import (
 	"azugo.io/azugo"
 	"azugo.io/azugo/server"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 
 	"github.com/gmb-lib/go-authbyte/authclient"
 	"github.com/gmb-lib/go-platform-kit/platform"
@@ -92,14 +91,8 @@ func (a *App) init() error {
 
 	var err error
 
-	// Inbound service authentication (DPoP). Development-only concession (mirrors the
-	// document + signing services): accept the demo single-page app's public-client
-	// user token (aud = DevUserAudience) and relax per-endpoint scope checks.
-	if cfg.DevAcceptUserToken {
-		a.Log().Warn("DEV_ACCEPT_USER_TOKEN is set — accepting public-client USER tokens (aud="+cfg.DevUserAudience+") on the preview API and RELAXING scope checks. DEVELOPMENT ONLY; never enable in production.",
-			zap.String("dev_user_audience", cfg.DevUserAudience))
-		cfg.Auth.ServiceAudience = cfg.DevUserAudience
-	}
+	// Inbound service authentication (DPoP): callers present svc:preview service
+	// tokens (the delegated on-behalf tokens included).
 
 	a.authClient, err = authclient.New(cfg.Auth)
 	if err != nil {
@@ -175,10 +168,6 @@ func (a *App) SecEvents() *secevents.Emitter { return a.secEvents }
 
 // SetSecEvents overrides the security-event emitter (test use only).
 func (a *App) SetSecEvents(e *secevents.Emitter) { a.secEvents = e }
-
-// DevAcceptUserToken reports whether the development-only user-token concession is
-// on (scope checks are then relaxed). Always false in production.
-func (a *App) DevAcceptUserToken() bool { return a.config.DevAcceptUserToken }
 
 // SetAuthMiddleware overrides the inbound auth middleware (test use only).
 func (a *App) SetAuthMiddleware(mw azugo.RequestHandlerFunc) { a.authMW = mw }
