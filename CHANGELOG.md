@@ -4,6 +4,23 @@ Notable changes to this service, newest first. Dated rather than versioned: the 
 published per branch and commit, so what matters is what landed on a given day. This file is
 written for whoever runs the service or integrates against it.
 
+## 2026-08-26
+
+### Added
+
+- **`SECURITY.md`** — how to report a vulnerability privately (GitHub private vulnerability
+  reporting on this repository), what to expect back, and which classes of problem matter most
+  for a service whose job is to open untrusted documents behind isolation.
+- **`CONTRIBUTING.md`** — the build-and-test gate a change must pass, how to propose one, and the
+  Developer Certificate of Origin sign-off that pull requests are now checked for.
+- **`.gitleaks.toml`** — the secret-scan configuration used by the repository's own checks
+  (default rules, nothing allowlisted).
+- The README gains a licence-and-contributing section. The licence itself is unchanged: MIT.
+
+### Notes
+
+- The default branch is now `develop` (was `main`); both branches build and publish as before.
+
 ## 2026-08-21
 
 ### Fixed

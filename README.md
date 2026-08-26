@@ -253,3 +253,12 @@ DOCUMENT_BASE_URL=http://localhost:19000 AUTH_ISSUER_URL=http://localhost:8080 .
 - **No cache.** Every request re-fetches the source bytes and re-renders. The manifest's `expiresAt` is a presentation hint only until an (ephemeral, encrypted) cache is added; there is no persistence layer.
 - **Single document source.** One `DOCUMENT_BASE_URL` is wired; multiple sources are not yet supported. With no source configured, the by-reference preview fails closed (`503`).
 - **Text extraction is best-effort.** The plain-text layer is whatever the engine can extract; a scanned/image-only PDF has no extractable text and the text endpoint returns `404` (no OCR).
+
+---
+
+## Licence and contributing
+
+MIT — see [LICENSE](LICENSE). Contributions are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) has
+the build-and-test gate and the process (commits are signed off under the Developer Certificate
+of Origin). Security problems go through the private route in [SECURITY.md](SECURITY.md), never a
+public issue.

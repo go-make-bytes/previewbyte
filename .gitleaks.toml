@@ -1,0 +1,9 @@
+# gitleaks configuration — the default rules, unchanged.
+#
+# Full-history secret scans are part of this repository's publish checks. Nothing is allowlisted:
+# a finding that is examined and judged not to be a secret is recorded here narrowly (by commit
+# and path) rather than dismissed in someone's head, so the judgement stays reviewable and the
+# scan stays at zero.
+
+[extend]
+useDefault = true
