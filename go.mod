@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	azugo.io/azugo v0.38.0
 	azugo.io/core v0.38.0
-	github.com/gmb-lib/go-authbyte v0.20.1
+	github.com/gmb-lib/go-authbyte v0.20.2
 	github.com/gmb-lib/go-platform-kit v1.10.0
 	github.com/gmb-lib/go-sec-events v1.1.4
 	github.com/go-quicktest/qt v1.102.0
