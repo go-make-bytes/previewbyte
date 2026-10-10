@@ -3,6 +3,42 @@
 Notable changes to this service, newest first, per release. This file is written for whoever
 runs the service or integrates against it.
 
+## v0.1.2
+
+A security release. **The service now builds with Go 1.27.2**, and its libraries move to their Go
+1.27.2 releases. Nothing about the API, the configuration or the database changes.
+
+### Changed
+
+- **Go 1.27.2** (was 1.27.0), both in `go.mod` and as the image's default build toolchain
+  (`ARG GO_VERSION` in the `Dockerfile`). Go 1.27.2 and `golang.org/x/net` v0.60.0 fix
+  vulnerabilities that this service's code reaches under 1.27.0: `govulncheck` found nine it calls,
+  GO-2026-6603, -6605, -6607, -6608, -6610, -6611, -6612, -6613 and -6617, in `net/http`,
+  `crypto/tls`, `mime/multipart` and `golang.org/x/net`. Under the new set it finds none. **Rebuild
+  the image to pick the fixes up**; an image built before this change still carries them.
+- **Libraries:** `go-authbyte` → v0.29.1 (from v0.23.1), `go-platform-kit` → v1.11.4,
+  `go-sec-events` → v1.2.2, azugo → v0.40.0, `fasthttp` → v1.75.0, `golang.org/x/image` → v0.47.0,
+  plus 38 indirect modules with them. The go-authbyte releases in between add features this service
+  does not use, with one visible change: when the authorization server refuses a token request, the
+  error no longer repeats the server's answer, so a log line built from that error stops carrying it
+  (the message is now `the token call responded <status>`). None of azugo v0.40.0's behaviour
+  changes reaches this service: it sets no cookies, issues no redirects after a non-GET request,
+  makes no outbound calls through azugo's HTTP client and implements no azugo cache.
+- **`go-pdfium` → v1.21.3** (was v1.19.8). It embeds a different PDFium build (the WebAssembly
+  binary changed), so previews are rendered by a newer PDFium. The rendering tests and the four fuzz
+  targets (sniffing, PDF inspection, image pages, text pagination) pass on it; check a few previews
+  of your own documents after upgrading.
+
+### Notes
+
+- The image build now caches Go modules and compiled packages between builds. The binary is built by
+  the same command with the same flags; only the build's layer order and caches changed.
+- CI's linter moved to golangci-lint v2.14.0. The earlier release cannot read Go 1.27.2's compiled
+  standard library and stops before linting anything.
+- The gate is green on Go 1.27.2: `go mod verify`, `go mod tidy -diff`, build, vet, `gofmt`,
+  golangci-lint v2.14.0, `go test -race` with **0 races**, and the four fuzz targets for 30 seconds
+  each with no failing input; `govulncheck` reports **no vulnerabilities found**.
+
 ## v0.1.1
 
 ### Fixed — a version tag points at the signed image digest again
