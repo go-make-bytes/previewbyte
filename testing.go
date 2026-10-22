@@ -9,8 +9,8 @@ import (
 	"github.com/go-quicktest/qt"
 )
 
-// TestApp builds an App for tests: a real renderer pool, no document wiring (tests
-// inject a document client over a stub transport), and a stub auth middleware
+// TestApp builds an App for tests: no renderer and no document wiring (tests
+// inject a renderer, and a document client over a stub transport), and a stub auth middleware
 // driven by the X-Test-Scopes request header (production always uses the DPoP
 // middleware).
 func TestApp(tb testing.TB) *App {
@@ -22,7 +22,7 @@ func TestApp(tb testing.TB) *App {
 	tb.Setenv("AUTH_ISSUER_URL", "http://localhost:8080")
 	tb.Setenv("SERVICE_AUDIENCE", "svc:preview")
 
-	app, err := New(nil, "0.0.0-test")
+	app, err := newApp(nil, "0.0.0-test", false)
 	qt.Assert(tb, qt.IsNil(err))
 
 	app.SetAuthMiddleware(TestAuthMiddleware())
