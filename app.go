@@ -62,6 +62,13 @@ type App struct {
 
 // New constructs the application.
 func New(cmd *cobra.Command, version string) (*App, error) {
+	return newApp(cmd, version, true)
+}
+
+// newApp constructs the application. With startRenderer false no renderer is
+// started, for a caller that injects its own: starting one compiles the whole
+// WebAssembly engine.
+func newApp(cmd *cobra.Command, version string, startRenderer bool) (*App, error) {
 	config := NewConfiguration()
 
 	a, err := server.New(cmd, server.Options{
@@ -74,14 +81,14 @@ func New(cmd *cobra.Command, version string) (*App, error) {
 	}
 
 	app := &App{App: a, config: config}
-	if err := app.init(); err != nil {
+	if err := app.init(startRenderer); err != nil {
 		return nil, err
 	}
 
 	return app, nil
 }
 
-func (a *App) init() error {
+func (a *App) init(startRenderer bool) error {
 	cfg := a.config
 
 	// Platform glue FIRST: logging + redaction, tracing, correlation.
@@ -129,6 +136,9 @@ func (a *App) init() error {
 	// to PDF via that converter and delegates rendering to the same PDF path; when
 	// it's unset, Office MIME types are simply absent from what this instance can
 	// preview — no failure mode, the same as any other unconfigured type.
+	if !startRenderer {
+		return nil
+	}
 	a.renderer, err = render.NewDispatch(cfg.RenderConfig())
 	if err != nil {
 		return fmt.Errorf("previewbyte: renderer: %w", err)
