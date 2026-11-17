@@ -3,6 +3,32 @@
 Notable changes to this service, newest first, per release. This file is written for whoever
 runs the service or integrates against it.
 
+## v0.1.3
+
+A security release. A token exchanged on a caller's behalf is no longer reused for a different token of the same
+person, and **the service now builds with Go 1.27.3**. Nothing about the API, the configuration or the database
+changes.
+
+### Security
+
+- **The authentication library moves to `go-authbyte` v0.31.1.** It caches a token exchanged on a caller's behalf
+  under the caller's own token, not under the person alone, and stops reusing it once that token has expired.
+  Before, a person whose token was renewed with different claims (another organisation, a stronger sign-in) could
+  have this service's onward calls carried for a few minutes by the token exchanged for the earlier one. Nothing to
+  configure; one more exchange per renewed token.
+- **Go 1.27.3** (was 1.27.2), in `go.mod` and as the image's default build toolchain (`ARG GO_VERSION` in the
+  `Dockerfile`). Go 1.27.3 fixes GO-2026-6809 in `crypto/x509`, which code making TLS calls reaches. **Rebuild the
+  image to pick the fix up.**
+
+### Changed
+
+- **Libraries:** azugo → v0.40.1, `fasthttp` → v1.76.0, `valkey-go` → v1.0.79, `go-jose` → v4.1.6, `go-pdfium` → v1.21.4,
+  plus their indirect modules.
+- **Go 1.27.4 and azugo v0.50.2** (go-authbyte v0.46.0, go-platform-kit v1.13.0, go-sec-events v1.3.0), in `go.mod`
+  and as the image's default build toolchain (`ARG GO_VERSION` in the `Dockerfile`). **Rebuild the image to pick
+  them up.** Request bodies the framework reads are held to its limit (413 over 4 MiB); this service's routes take
+  no request body, so nothing changes for callers.
+
 ## v0.1.2
 
 A security release. **The service now builds with Go 1.27.2**, and its libraries move to their Go

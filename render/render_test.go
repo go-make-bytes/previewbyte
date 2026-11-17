@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,20 +46,46 @@ func samplePDF() []byte {
 	return buf.Bytes()
 }
 
-func testRenderer(t *testing.T) Renderer {
-	r, err := NewPDFium(Config{
-		PoolSize:      1,
-		MaxDPI:        150,
-		MaxWidth:      2048,
-		ImageFormat:   "png",
-		Timeout:       20 * time.Second,
-		MaxPages:      100,
-		InputMaxBytes: 64 << 20,
-		SupportedMime: map[string]bool{"application/pdf": true},
-	})
-	qt.Assert(t, qt.IsNil(err))
+// Starting a PDFium pool compiles the whole WebAssembly module, which takes
+// seconds (many more under the race detector), so every test on the common
+// configuration shares one pool, started on first use and closed by TestMain.
+var (
+	sharedOnce sync.Once
+	shared     Renderer
+	sharedErr  error
+)
 
-	return r
+// keptOpen hands out the shared renderer to a test: its Close leaves the pool
+// running for the tests after it.
+type keptOpen struct{ Renderer }
+
+func (keptOpen) Close() {}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if shared != nil {
+		shared.Close()
+	}
+	os.Exit(code)
+}
+
+func testRenderer(t *testing.T) Renderer {
+	t.Helper()
+	sharedOnce.Do(func() {
+		shared, sharedErr = NewPDFium(Config{
+			PoolSize:      1,
+			MaxDPI:        150,
+			MaxWidth:      2048,
+			ImageFormat:   "png",
+			Timeout:       20 * time.Second,
+			MaxPages:      100,
+			InputMaxBytes: 64 << 20,
+			SupportedMime: map[string]bool{"application/pdf": true},
+		})
+	})
+	qt.Assert(t, qt.IsNil(sharedErr))
+
+	return keptOpen{shared}
 }
 
 // TestPDFiumRendersSamplePDF exercises the real WebAssembly PDFium engine
